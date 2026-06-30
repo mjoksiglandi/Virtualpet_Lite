@@ -1,23 +1,23 @@
-# gif
+# Virtualpet_Lite
 
-> Pet de escritorio embebida para ESP32-S3 con OLED, RTC, IMU y buzzer.
+> Mascota de escritorio embebida para ESP32-S3 con OLED, RTC, IMU y buzzer.
 
 ## Resumen
 
-Este proyecto implementa una mascota de escritorio minimalista sobre un ESP32-S3. La mascota vive en una pantalla OLED monocroma, cambia de expresion segun la hora del dia, reacciona a la inclinacion del dispositivo mediante una IMU y emite sonidos simples por buzzer en transiciones relevantes.
+`Virtualpet_Lite` implementa una mascota de escritorio minimalista sobre un ESP32-S3. La mascota vive en una pantalla OLED monocroma, cambia de expresion segun la hora del dia, reacciona a la inclinacion del dispositivo mediante una IMU y emite sonidos simples por buzzer en transiciones relevantes.
 
 Hoy el firmware ya tiene una arquitectura base funcional:
 
 - Render de ojos, pupilas, cejas y parpadeo en OLED SH1106.
 - Estados de animo basados en horario usando RTC externo.
-- Lectura de inclinacion con QMI8658 para mover la mirada.
+- Lectura de inclinacion con QMI8658 para mover pupilas, escleras y postura visual.
 - Patrones de sonido no bloqueantes por cambio de fase y campana diaria.
 - Latch de energia por boton `PWR` y apagado por `long press`.
 - Modulos separados para UI, reloj e IMU.
 
 ## Idea del proyecto
 
-La intencion del repo es construir una "pet de escritorio" fisica: una pequena presencia animada que acompana la jornada, expresa estados de animo y responde a su contexto sin necesidad de una interfaz compleja.
+La intencion del repo es construir una mascota de escritorio fisica: una pequena presencia animada que acompana la jornada, expresa estados de animo y responde a su contexto sin necesidad de una interfaz compleja.
 
 La logica actual ya modela una rutina diaria:
 
@@ -98,7 +98,7 @@ Coordina todo el comportamiento del dispositivo:
 - Calcula la fase del dia y ajusta `mood` y `brow`.
 - Reproduce un patron sonoro no bloqueante al cambiar de fase.
 - Dispara una campana diaria al entrar a la fase de tarde relajada.
-- Lee la inclinacion y la traduce en desplazamiento de mirada.
+- Lee la inclinacion y la traduce en desplazamiento de pupila, esclera y leve `body lean`.
 - Atiende comandos seriales para consultar y ajustar el RTC.
 - Permite apagado intencional mediante `long press` del boton `PWR`.
 - Refresca la UI a aproximadamente 60 FPS.
@@ -107,10 +107,12 @@ Coordina todo el comportamiento del dispositivo:
 
 La UI actual dibuja una cara simple y expresiva:
 
-- Ojos redondeados
-- Pupilas con micro movimiento
+- Ojos redondeados compuestos por esclera, pupila, highlight y cejas
+- Pupilas con micro movimiento cuando la IMU no esta controlando la mirada
 - Parpadeo periodico
 - Cejas segun estado emocional
+- Movimiento de esclera y pupila afinado desde la IMU
+- Leve sobrepaso controlado de pupila fuera de la esclera para dar mas expresividad
 - Overlay glitch reservado para un modo especial
 
 ### `RtcClock`
@@ -140,6 +142,10 @@ Definidas en [platformio.ini](C:/Users/juan.cornejo/Documents/PlatformIO/Project
 - `solderedelectronics/Soldered PCF85063A RTC Library`
 
 ## Build y entorno
+
+Repositorio remoto actual:
+
+- GitHub: [mjoksiglandi/Virtualpet_Lite](https://github.com/mjoksiglandi/Virtualpet_Lite)
 
 Comando de compilacion:
 
@@ -186,6 +192,7 @@ Lo que ya esta implementado:
 - Mascota renderizada y animada.
 - Modelo de estados por horario.
 - Lectura de RTC y de IMU.
+- Movimiento de ojos afinado sobre hardware real con rango ampliado en OLED.
 - Audio no bloqueante por buzzer.
 - Latch de energia funcional.
 - Apagado por `long press` del boton `PWR`.
@@ -214,6 +221,23 @@ Estado actual luego del ajuste:
 - La placa permanece encendida tras soltar `PWR` gracias al hold en `GPIO41`.
 - El apagado intencional se ejecuta por `long press` en `GPIO40`.
 - El RTC fue validado en funcionamiento real con el dominio `RTC + -` energizado.
+
+## Ajustes recientes de UI + IMU
+
+Durante la afinacion sobre hardware real se hicieron varios cambios para que la mascota use mejor el area util del display y responda de forma mas natural:
+
+- Se aumento la velocidad de reaccion de la mirada.
+- Se elimino un segundo desplazamiento retardado causado por `bodyLeanX`.
+- Se sincronizo el movimiento de pupila y esclera para evitar una sensacion de doble etapa.
+- Se redujo el `gap` entre ojos y se agrando levemente la esclera.
+- La pupila ahora puede sobrepasar de forma controlada el borde de la esclera para una expresion mas viva.
+
+El resultado actual prioriza:
+
+- seguimiento rapido
+- mejor uso del OLED
+- mayor expresividad
+- control visual suficientemente estable en hardware real
 
 ## Limitaciones conocidas
 

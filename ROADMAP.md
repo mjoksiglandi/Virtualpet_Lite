@@ -1,10 +1,10 @@
 # Roadmap
 
-> Hoja de ruta propuesta para evolucionar este repo desde prototipo a una pet de escritorio mas completa y mantenible.
+> Hoja de ruta propuesta para evolucionar `Virtualpet_Lite` desde prototipo a una mascota de escritorio mas completa y mantenible.
 
 ## Enfoque
 
-La mejor forma de planificar este proyecto es tratarlo como un producto embedded pequeno con cuatro frentes que avanzan en paralelo:
+La mejor forma de planificar `Virtualpet_Lite` es tratarlo como un producto embedded pequeno con cuatro frentes que avanzan en paralelo:
 
 1. Base tecnica estable
 2. Comportamiento de la mascota
@@ -92,6 +92,7 @@ Estado:
 - `Avance real implementado`.
 - `Melodies` ya reemplazo los cues bloqueantes de audio.
 - `bodyLeanX` ya es visible en la UI actual.
+- La interaccion IMU -> ojos fue afinada directamente en hardware real.
 - Pendiente: seguir puliendo expresividad y consistencia visual entre estados.
 
 ## Fase 3: Agregar interaccion de usuario
@@ -128,6 +129,7 @@ Entregables:
 - Rutinas aleatorias suaves que no rompan la personalidad.
 - Modo glitch, descanso, celebracion o aburrimiento.
 - Tabla de comportamiento editable desde configuracion.
+- Variantes visuales mas claras entre pupila, esclera y cejas segun estado.
 
 Definicion de listo:
 
@@ -144,6 +146,7 @@ Entregables:
 - Manejo de errores visibles cuando falla RTC o IMU.
 - Consumo y estabilidad validados para uso prolongado.
 - Demo reproducible con flujo de setup simple.
+- Documentacion alineada con el nombre del repo `Virtualpet_Lite`.
 
 Definicion de listo:
 
