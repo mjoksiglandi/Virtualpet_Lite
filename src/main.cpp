@@ -198,6 +198,12 @@ static void applyPhaseToPet(PetPhase ph, const DateTime& dt) {
   }
 }
 
+struct GestureOverride {
+  Mood mood = Mood::Neutral;
+  uint8_t brow = 20;
+  uint32_t untilMs = 0;
+};
+
 static int8_t easeToZero(int8_t value) {
   if (value > 0) return value - 1;
   if (value < 0) return value + 1;
@@ -254,6 +260,12 @@ void loop() {
   static uint32_t pwrPressedAt = 0;
   static bool pwrShutdownArmed = false;
   static uint32_t motionAlertUntil = 0;
+  static GestureOverride gestureOverride;
+  static uint32_t shakeCooldownUntil = 0;
+  static bool shakeArmed = true;
+  static uint32_t tiltGestureCooldownUntil = 0;
+  static uint32_t pitchHoldSince = 0;
+  static int8_t pitchHoldDir = 0;
 
   const uint32_t now = millis();
 
@@ -317,8 +329,8 @@ void loop() {
   }
 
   // IMU -> mirada suave + "se cae" por inclinación sostenida (no por sacudida)
-  ImuAngles ang{};
-  if (imu.readAngles(ang)) {
+  ImuSample imuSample{};
+  if (imu.readSample(imuSample)) {
     pet.state().imuActive = true;
 
     // roll/pitch en grados aprox
@@ -327,8 +339,8 @@ void loop() {
     static float lastRollF = 0.0f;
     static float lastPitchF = 0.0f;
     // low-pass: mas responsivo para que la UI siga mejor la mano
-    rollF  = rollF  * 0.70f + ang.roll  * 0.30f;
-    pitchF = pitchF * 0.70f + ang.pitch * 0.30f;
+    rollF  = rollF  * 0.70f + imuSample.angles.roll  * 0.30f;
+    pitchF = pitchF * 0.70f + imuSample.angles.pitch * 0.30f;
 
     // mirada (más suave)
     const float rollNorm = constrain(rollF / 34.0f, -1.0f, 1.0f);
@@ -351,6 +363,56 @@ void loop() {
     if (motionDelta > 5.5f) {
       motionAlertUntil = now + 180;
     }
+
+    const float accelMag = sqrtf(
+      imuSample.ax * imuSample.ax +
+      imuSample.ay * imuSample.ay +
+      imuSample.az * imuSample.az
+    );
+    const float accelDynamic = fabsf(accelMag - 1.0f);
+    const float gyroShake = fabsf(imuSample.gx) + fabsf(imuSample.gy) + fabsf(imuSample.gz);
+
+    if (accelDynamic < 0.18f && gyroShake < 90.0f) {
+      shakeArmed = true;
+    }
+
+    const bool strongShake = (accelDynamic > 0.38f && gyroShake > 140.0f) || gyroShake > 320.0f;
+    if (strongShake && shakeArmed && now >= shakeCooldownUntil) {
+      shakeArmed = false;
+      shakeCooldownUntil = now + 1400;
+      gestureOverride.mood = Mood::Glitch;
+      gestureOverride.brow = 95;
+      gestureOverride.untilMs = now + 700;
+      motionAlertUntil = now + 700;
+    }
+
+    const bool pitchHeld = fabsf(pitchNorm) > 0.72f;
+    const int8_t pitchDir = (pitchNorm > 0.0f) ? 1 : -1;
+    if (pitchHeld) {
+      if (pitchHoldSince == 0 || pitchHoldDir != pitchDir) {
+        pitchHoldSince = now;
+        pitchHoldDir = pitchDir;
+      } else if (now >= tiltGestureCooldownUntil && (now - pitchHoldSince) > 850) {
+        tiltGestureCooldownUntil = now + 2200;
+        pitchHoldSince = now;
+
+        if (pitchDir > 0) {
+          gestureOverride.mood = Mood::Sleepy;
+          gestureOverride.brow = 6;
+          gestureOverride.untilMs = now + 1400;
+          Melodies::beep(920, 80, 25);
+        } else {
+          gestureOverride.mood = Mood::Angry;
+          gestureOverride.brow = 92;
+          gestureOverride.untilMs = now + 1400;
+          Melodies::play(Melodies::Tune::PhaseDouble);
+        }
+      }
+    } else {
+      pitchHoldSince = 0;
+      pitchHoldDir = 0;
+    }
+
     pet.state().motionAlert = motionAlertUntil > now;
     lastRollF = rollF;
     lastPitchF = pitchF;
@@ -369,6 +431,11 @@ void loop() {
   pet.tickBlink();
   pet.tickMoodAuto();
   Melodies::tick();
+
+  if (gestureOverride.untilMs > now) {
+    pet.state().mood = gestureOverride.mood;
+    pet.state().brow = gestureOverride.brow;
+  }
 
   // render (sin hora arriba)
   pet.render(hasTime ? &dt : nullptr);

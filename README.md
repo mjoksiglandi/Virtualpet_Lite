@@ -150,13 +150,13 @@ Repositorio remoto actual:
 Comando de compilacion:
 
 ```powershell
-& "C:\Users\juan.cornejo\.platformio\penv\Scripts\platformio.exe" run
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run
 ```
 
 Monitor serial:
 
 ```powershell
-& "C:\Users\juan.cornejo\.platformio\penv\Scripts\platformio.exe" device monitor
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" device monitor
 ```
 
 ## Comandos seriales
