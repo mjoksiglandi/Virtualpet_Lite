@@ -1,6 +1,8 @@
 #include <Arduino.h>
+#include <esp_sleep.h>
 #include <Wire.h>
 #include <U8g2lib.h>
+#include <driver/gpio.h>
 
 #include "pinout.h"
 
@@ -210,12 +212,81 @@ static int8_t easeToZero(int8_t value) {
   return 0;
 }
 
+static bool isLeapYear(uint16_t year) {
+  return ((year % 4u) == 0u && (year % 100u) != 0u) || ((year % 400u) == 0u);
+}
+
+static uint8_t daysInMonth(uint16_t year, uint8_t month) {
+  static const uint8_t DAYS[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+  if (month == 2) return isLeapYear(year) ? 29 : 28;
+  if (month < 1 || month > 12) return 31;
+  return DAYS[month - 1];
+}
+
+static void advanceOneDay(DateTime& dt) {
+  dt.day++;
+  if (dt.day > daysInMonth(dt.year, dt.month)) {
+    dt.day = 1;
+    dt.month++;
+    if (dt.month > 12) {
+      dt.month = 1;
+      dt.year++;
+    }
+  }
+}
+
+static uint32_t secondsUntilNextWake(const DateTime& dt) {
+  DateTime wake = dt;
+  wake.hour = 8;
+  wake.minute = 40;
+  wake.second = 0;
+
+  const bool alreadyPastWake =
+    (dt.hour > 8) ||
+    (dt.hour == 8 && (dt.minute > 40 || (dt.minute == 40 && dt.second > 0)));
+
+  if (dt.hour >= 22 || alreadyPastWake) {
+    advanceOneDay(wake);
+  }
+
+  uint32_t nowSec = (uint32_t)dt.hour * 3600u + (uint32_t)dt.minute * 60u + dt.second;
+  uint32_t wakeSec = (uint32_t)wake.hour * 3600u + (uint32_t)wake.minute * 60u + wake.second;
+  uint32_t dayOffset = 0;
+
+  if (wake.year != dt.year || wake.month != dt.month || wake.day != dt.day) {
+    dayOffset = 24u * 3600u;
+  }
+
+  return (dayOffset + wakeSec) - nowSec;
+}
+
+static void enterNightDeepSleep(const DateTime& dt) {
+  const uint32_t sleepSec = max<uint32_t>(secondsUntilNextWake(dt), 5u);
+
+  Serial.printf("Entering deep sleep for %lu seconds until next wake window\n", (unsigned long)sleepSec);
+  Serial.flush();
+
+  Melodies::stop();
+  u8g2.clearBuffer();
+  u8g2.sendBuffer();
+  u8g2.setPowerSave(1);
+
+  powerHold(true);
+  gpio_hold_dis((gpio_num_t)PIN_PWR_HOLD);
+  gpio_hold_en((gpio_num_t)PIN_PWR_HOLD);
+  gpio_deep_sleep_hold_en();
+
+  esp_sleep_enable_timer_wakeup((uint64_t)sleepSec * 1000000ULL);
+  esp_deep_sleep_start();
+}
+
 // ---------------- SETUP ----------------
 void setup() {
   Serial.begin(115200);
   delay(50);
 
   pinMode(PIN_PWR_HOLD, OUTPUT);
+  gpio_hold_dis((gpio_num_t)PIN_PWR_HOLD);
   powerHold(true);
 
   pinMode(PIN_BTN_PWR, INPUT_PULLUP);
@@ -325,6 +396,11 @@ void loop() {
       }
 
       applyPhaseToPet(ph, dt);
+
+      if (rtc.valid() && ph == PetPhase::NightSleep) {
+        delay(120);
+        enterNightDeepSleep(dt);
+      }
     }
   }
 
