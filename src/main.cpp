@@ -7,6 +7,7 @@
 #include "PetUI.h"
 #include "RtcClock.h"
 #include "ImuQmi8658.h"
+#include "Melodies.h"
 
 // static constexpr int OLED_I2C_ADDR = 0x3C;
 
@@ -24,57 +25,7 @@ static ImuQmi8658 imu;
 static constexpr int BUZZER = PIN_BUZZER;
 static constexpr int BUZZ_CH = 0;
 static constexpr int BUZZ_RES = 8;
-
-static void buzzerInit() {
-  ledcSetup(BUZZ_CH, 2000, BUZZ_RES);
-  ledcAttachPin(BUZZER, BUZZ_CH);
-  ledcWriteTone(BUZZ_CH, 0);
-}
-
-static void beepPattern(uint8_t id) {
-  // patrones cortos (bloqueantes, pero breves)
-  switch (id) {
-    case 1: // tick
-      ledcWriteTone(BUZZ_CH, 2200); delay(35);
-      ledcWriteTone(BUZZ_CH, 0);    delay(25);
-      break;
-
-    case 2: // doble
-      ledcWriteTone(BUZZ_CH, 1800); delay(40);
-      ledcWriteTone(BUZZ_CH, 0);    delay(35);
-      ledcWriteTone(BUZZ_CH, 2000); delay(45);
-      ledcWriteTone(BUZZ_CH, 0);    delay(25);
-      break;
-
-    case 3: // “alerta” suave
-      ledcWriteTone(BUZZ_CH, 1200); delay(70);
-      ledcWriteTone(BUZZ_CH, 0);    delay(35);
-      ledcWriteTone(BUZZ_CH, 900);  delay(85);
-      ledcWriteTone(BUZZ_CH, 0);    delay(35);
-      break;
-
-    default:
-      ledcWriteTone(BUZZ_CH, 0);
-      break;
-  }
-  ledcWriteTone(BUZZ_CH, 0);
-}
-
-// mini “campana de salida” (tipo escuela). Se ejecuta SOLO una vez al día.
-static void melodySchool() {
-  const int notes[] = { 988, 784, 659, 784, 988, 0, 988, 1047 };
-  const int dur[]   = { 180, 180, 180, 180, 280, 120, 180, 420 };
-
-  for (size_t i = 0; i < sizeof(notes)/sizeof(notes[0]); i++) {
-    if (notes[i] > 0) {
-      ledcWriteTone(BUZZ_CH, notes[i]);
-    } else {
-      ledcWriteTone(BUZZ_CH, 0);
-    }
-    delay(dur[i]);
-  }
-  ledcWriteTone(BUZZ_CH, 0);
-}
+static constexpr uint32_t PWR_LONG_PRESS_MS = 1500;
 
 // ---------------- HORARIO / FASES ----------------
 enum class PetPhase : uint8_t {
@@ -87,6 +38,103 @@ enum class PetPhase : uint8_t {
   RelaxPM,
   NightSleep
 };
+
+static void playPhaseCue(PetPhase ph) {
+  if (ph == PetPhase::NightSleep) Melodies::play(Melodies::Tune::PhaseAlert);
+  else if (ph == PetPhase::WorkToAngry) Melodies::play(Melodies::Tune::PhaseDouble);
+  else Melodies::play(Melodies::Tune::PhaseTick);
+}
+
+static void powerHold(bool enable) {
+  digitalWrite(PIN_PWR_HOLD, enable ? HIGH : LOW);
+}
+
+static void printRtcSnapshot() {
+  DateTime dt{};
+  bool oscStopped = false;
+  bool clockStopped = false;
+  const bool readOk = rtc.read(dt);
+  const bool statusOk = rtc.readStatus(oscStopped);
+  const bool controlOk = rtc.readControl(clockStopped);
+
+  if (!readOk) {
+    Serial.println("RTC read failed");
+    return;
+  }
+
+  Serial.printf(
+    "RTC %04u-%02u-%02u %02u:%02u:%02u | valid=%s | osc_stopped=%s\n",
+    dt.year,
+    dt.month,
+    dt.day,
+    dt.hour,
+    dt.minute,
+    dt.second,
+    rtc.valid() ? "yes" : "no",
+    statusOk ? (oscStopped ? "yes" : "no") : "unknown"
+  );
+  Serial.printf("RTC ctrl_stop=%s\n", controlOk ? (clockStopped ? "yes" : "no") : "unknown");
+}
+
+static bool parseDateTime(const String& value, DateTime& out) {
+  int yy, mo, dd, hh, mi, ss;
+  if (sscanf(value.c_str(), "%d-%d-%d %d:%d:%d", &yy, &mo, &dd, &hh, &mi, &ss) != 6) {
+    return false;
+  }
+
+  if (yy < 2020 || yy > 2099) return false;
+  if (mo < 1 || mo > 12) return false;
+  if (dd < 1 || dd > 31) return false;
+  if (hh < 0 || hh > 23) return false;
+  if (mi < 0 || mi > 59) return false;
+  if (ss < 0 || ss > 59) return false;
+
+  out.year = (uint16_t)yy;
+  out.month = (uint8_t)mo;
+  out.day = (uint8_t)dd;
+  out.hour = (uint8_t)hh;
+  out.minute = (uint8_t)mi;
+  out.second = (uint8_t)ss;
+  return true;
+}
+
+static void handleSerialCommand(const String& raw) {
+  String cmd = raw;
+  cmd.trim();
+  if (cmd.length() == 0) return;
+
+  if (cmd.equalsIgnoreCase("HELP")) {
+    Serial.println("Commands:");
+    Serial.println("  RTC?");
+    Serial.println("  SET_RTC YYYY-MM-DD HH:MM:SS");
+    return;
+  }
+
+  if (cmd.equalsIgnoreCase("RTC?")) {
+    printRtcSnapshot();
+    return;
+  }
+
+  if (cmd.startsWith("SET_RTC ")) {
+    DateTime dt{};
+    const String value = cmd.substring(8);
+    if (!parseDateTime(value, dt)) {
+      Serial.println("Invalid format. Use: SET_RTC YYYY-MM-DD HH:MM:SS");
+      return;
+    }
+
+    if (!rtc.set(dt)) {
+      Serial.println("RTC set failed");
+      return;
+    }
+
+    Serial.println("RTC updated");
+    printRtcSnapshot();
+    return;
+  }
+
+  Serial.println("Unknown command. Type HELP");
+}
 
 static PetPhase currentPhase = PetPhase::Unknown;
 static uint32_t lastSchoolChimeKey = 0; // yyyy*512 + mm*32 + dd
@@ -155,6 +203,11 @@ void setup() {
   Serial.begin(115200);
   delay(50);
 
+  pinMode(PIN_PWR_HOLD, OUTPUT);
+  powerHold(true);
+
+  pinMode(PIN_BTN_PWR, INPUT_PULLUP);
+
   Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
 
   // OLED
@@ -163,10 +216,10 @@ void setup() {
   u8g2.setContrast(200);
 
   // Periféricos
-  buzzerInit();
+  Melodies::begin(BUZZER, BUZZ_CH, BUZZ_RES);
 
   // RTC
-  rtc.begin();
+  const bool rtcOk = rtc.begin();
 
   // IMU
   imu.begin();
@@ -179,6 +232,10 @@ void setup() {
   pet.state().blink = 0;
   pet.state().bodyLeanX = 0;
 
+  Melodies::play(Melodies::Tune::Boot);
+
+  Serial.printf("RTC begin: %s\n", rtcOk ? "OK" : "FAIL");
+  Serial.println("Type HELP for RTC serial commands");
   Serial.println("Pet boot OK");
 }
 
@@ -187,8 +244,42 @@ void loop() {
   static uint32_t nextRtcAt = 0;
   static DateTime dt{};
   static bool hasTime = false;
+  static String serialLine;
+  static uint32_t pwrPressedAt = 0;
+  static bool pwrShutdownArmed = false;
 
   const uint32_t now = millis();
+
+  while (Serial.available() > 0) {
+    const char c = (char)Serial.read();
+    if (c == '\r') continue;
+    if (c == '\n') {
+      handleSerialCommand(serialLine);
+      serialLine = "";
+      continue;
+    }
+
+    if (serialLine.length() < 96) {
+      serialLine += c;
+    }
+  }
+
+  const bool pwrPressed = digitalRead(PIN_BTN_PWR) == LOW;
+  if (pwrPressed) {
+    if (pwrPressedAt == 0) {
+      pwrPressedAt = now;
+      pwrShutdownArmed = false;
+    } else if (!pwrShutdownArmed && (now - pwrPressedAt) >= PWR_LONG_PRESS_MS) {
+      pwrShutdownArmed = true;
+      Serial.println("Power button long press: shutting down");
+      Melodies::play(Melodies::Tune::PhaseAlert);
+      delay(120);
+      powerHold(false);
+    }
+  } else {
+    pwrPressedAt = 0;
+    pwrShutdownArmed = false;
+  }
 
   // RTC read cada 1s
   if (now >= nextRtcAt) {
@@ -205,13 +296,13 @@ void loop() {
         uint32_t dayKey = (uint32_t)(dt.year % 100) * 512u + (uint32_t)dt.month * 32u + (uint32_t)dt.day;
         if (ph == PetPhase::RelaxPM && dt.hour == 18 && dt.minute == 0 && lastSchoolChimeKey != dayKey) {
           lastSchoolChimeKey = dayKey;
-          melodySchool();
+          Melodies::play(Melodies::Tune::SchoolChime18);
         }
 
         // beep por cambio de fase
-        if (ph == PetPhase::NightSleep) beepPattern(3);
-        else if (ph == PetPhase::WorkToAngry) beepPattern(2);
-        else beepPattern(1);
+        if (!(ph == PetPhase::RelaxPM && dt.hour == 18 && dt.minute == 0)) {
+          playPhaseCue(ph);
+        }
       }
 
       applyPhaseToPet(ph, dt);
@@ -262,6 +353,7 @@ void loop() {
   // vida: blink y micro anim
   pet.tickBlink();
   pet.tickMoodAuto();
+  Melodies::tick();
 
   // render (sin hora arriba)
   pet.render(hasTime ? &dt : nullptr);

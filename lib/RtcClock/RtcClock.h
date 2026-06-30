@@ -11,6 +11,8 @@ class RtcClock {
 public:
   bool begin();
   bool read(DateTime& out);
+  bool readStatus(bool& oscillatorStopped);
+  bool readControl(bool& clockStopped);
 
   // escribe fecha/hora (UTC/local da lo mismo mientras seas consistente)
   bool set(const DateTime& dt);

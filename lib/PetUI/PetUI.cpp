@@ -54,9 +54,12 @@ void PetUI::drawEyes(int w, int h) {
   int cx = w / 2;
   int cy = h / 2;
 
-  int lx = cx - eyeW - gap / 2 + _s.eyeShiftX;
-  int rx = cx + gap / 2 + _s.eyeShiftX;
-  int y  = cy - eyeH / 2 + _s.eyeShiftY;
+  const int leanX = constrain((int)_s.bodyLeanX, -8, 8);
+  const int leanY = abs(leanX) / 3;
+
+  int lx = cx - eyeW - gap / 2 + _s.eyeShiftX + leanX;
+  int rx = cx + gap / 2 + _s.eyeShiftX + leanX;
+  int y  = cy - eyeH / 2 + _s.eyeShiftY + leanY;
 
   // Blink reduce altura
   int openH = eyeH;
@@ -96,9 +99,12 @@ void PetUI::drawEyes(int w, int h) {
   if (_s.mood == Mood::Angry) tilt = -6;
   if (_s.mood == Mood::Sleepy) tilt = 5;
 
+  int browInset = map(strength, 0, 100, 2, 7);
+  int leanBrow = leanX / 2;
+
   _d.setDrawColor(1);
-  _d.drawLine(lx + 6, browY + tilt, lx + eyeW - 6, browY);
-  _d.drawLine(rx + 6, browY, rx + eyeW - 6, browY + tilt);
+  _d.drawLine(lx + browInset, browY + tilt + leanBrow, lx + eyeW - browInset, browY - leanBrow / 2);
+  _d.drawLine(rx + browInset, browY + leanBrow / 2, rx + eyeW - browInset, browY + tilt - leanBrow);
 }
 
 void PetUI::drawGlitchOverlay(int w, int h) {

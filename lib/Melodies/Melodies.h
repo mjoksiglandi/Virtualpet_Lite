@@ -9,7 +9,9 @@ struct Note {
 };
 
 enum class Tune : uint8_t {
-  StateChange = 0,
+  PhaseTick = 0,
+  PhaseDouble,
+  PhaseAlert,
   SchoolChime18,
   Boot
 };

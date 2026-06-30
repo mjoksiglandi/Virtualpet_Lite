@@ -43,8 +43,47 @@ bool RtcClock::read(DateTime& out) {
   return true;
 }
 
+bool RtcClock::readStatus(bool& oscillatorStopped) {
+  oscillatorStopped = false;
+  if (!_ok) return false;
+
+  Wire.beginTransmission(ADDR);
+  Wire.write(0x04);
+  if (Wire.endTransmission(false) != 0) return false;
+
+  uint8_t n = Wire.requestFrom((int)ADDR, 1);
+  if (n != 1) return false;
+
+  const uint8_t sec = Wire.read();
+  oscillatorStopped = (sec & 0x80) != 0;
+  return true;
+}
+
+bool RtcClock::readControl(bool& clockStopped) {
+  clockStopped = false;
+  if (!_ok) return false;
+
+  Wire.beginTransmission(ADDR);
+  Wire.write(0x00);
+  if (Wire.endTransmission(false) != 0) return false;
+
+  uint8_t n = Wire.requestFrom((int)ADDR, 1);
+  if (n != 1) return false;
+
+  const uint8_t ctrl1 = Wire.read();
+  clockStopped = (ctrl1 & 0x20) != 0;
+  return true;
+}
+
 bool RtcClock::set(const DateTime& dt) {
   if (!_ok) return false;
+
+  // Ensure the RTC divider chain is running and default control flags are cleared.
+  Wire.beginTransmission(ADDR);
+  Wire.write(0x00);
+  Wire.write((uint8_t)0x00); // Control_1: STOP=0, normal 24h mode
+  Wire.write((uint8_t)0x00); // Control_2: clear flags / disable interrupts
+  if (Wire.endTransmission() != 0) return false;
 
   // escribe 7 bytes desde 0x04
   Wire.beginTransmission(ADDR);

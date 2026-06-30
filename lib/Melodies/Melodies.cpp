@@ -23,9 +23,19 @@ static const uint16_t B3 = 247;
 
 // ---- melodías editables acá (sin tocar tu UI) ----
 
-// “beep” simple (para cambios de estado)
-static const Note SEQ_STATE_CHANGE[] = {
-  { 880, 70 }, { 0, 40 }, { 1320, 70 }
+// cambio suave
+static const Note SEQ_PHASE_TICK[] = {
+  { 2200, 35 }, { 0, 25 }
+};
+
+// cambio marcado
+static const Note SEQ_PHASE_DOUBLE[] = {
+  { 1800, 40 }, { 0, 35 }, { 2000, 45 }, { 0, 25 }
+};
+
+// entrada a noche / alerta suave
+static const Note SEQ_PHASE_ALERT[] = {
+  { 1200, 70 }, { 0, 35 }, { 900, 85 }, { 0, 35 }
 };
 
 // “boot” corto
@@ -49,12 +59,12 @@ static const Note SEQ_SCHOOL_18[] = {
 static void ledcTone(uint16_t freq) {
   if (g_gpio == 255) return;
   if (freq == 0) {
-    ledcWriteTone(g_ch, 0);
-    ledcWrite(g_ch, 0);
+    ledcWriteTone(g_gpio, 0);
+    ledcWrite(g_gpio, 0);
   } else {
-    ledcWriteTone(g_ch, freq);
+    ledcWriteTone(g_gpio, freq);
     // duty medio (depende del buzzer, ajustable)
-    ledcWrite(g_ch, (1 << g_res) / 2);
+    ledcWrite(g_gpio, (1 << g_res) / 2);
   }
 }
 
@@ -63,8 +73,7 @@ void begin(uint8_t gpioBuzzer, uint8_t ledcChannel, uint16_t baseResolutionBits)
   g_ch   = ledcChannel;
   g_res  = (uint8_t)baseResolutionBits;
 
-  ledcSetup(g_ch, 2000, g_res);      // freq inicial cualquiera
-  ledcAttachPin(g_gpio, g_ch);
+  ledcAttachChannel(g_gpio, 2000, g_res, g_ch);
   stop();
 }
 
@@ -80,7 +89,9 @@ bool isPlaying() { return g_playing; }
 
 void play(Tune t) {
   switch (t) {
-    case Tune::StateChange: g_seq = SEQ_STATE_CHANGE; g_len = sizeof(SEQ_STATE_CHANGE)/sizeof(SEQ_STATE_CHANGE[0]); break;
+    case Tune::PhaseTick: g_seq = SEQ_PHASE_TICK; g_len = sizeof(SEQ_PHASE_TICK)/sizeof(SEQ_PHASE_TICK[0]); break;
+    case Tune::PhaseDouble: g_seq = SEQ_PHASE_DOUBLE; g_len = sizeof(SEQ_PHASE_DOUBLE)/sizeof(SEQ_PHASE_DOUBLE[0]); break;
+    case Tune::PhaseAlert: g_seq = SEQ_PHASE_ALERT; g_len = sizeof(SEQ_PHASE_ALERT)/sizeof(SEQ_PHASE_ALERT[0]); break;
     case Tune::SchoolChime18: g_seq = SEQ_SCHOOL_18; g_len = sizeof(SEQ_SCHOOL_18)/sizeof(SEQ_SCHOOL_18[0]); break;
     case Tune::Boot: g_seq = SEQ_BOOT; g_len = sizeof(SEQ_BOOT)/sizeof(SEQ_BOOT[0]); break;
     default: g_seq = nullptr; g_len = 0; break;
