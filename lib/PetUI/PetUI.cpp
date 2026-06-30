@@ -29,7 +29,9 @@ void PetUI::tickBlink() {
 }
 
 void PetUI::tickMoodAuto() {
-  // micro movimiento de pupilas (friendly)
+  // El micro movimiento solo se aplica cuando la IMU no esta guiando la mirada.
+  if (_s.imuActive) return;
+
   if (random(0, 100) < 2) {
     _s.lookX = random(-3, 4);
     _s.lookY = random(-2, 3);
@@ -39,7 +41,7 @@ void PetUI::tickMoodAuto() {
 void PetUI::render(const DateTime*) {
   _d.clearBuffer();
   drawEyes(_d.getDisplayWidth(), _d.getDisplayHeight());
-  if (_s.mood == Mood::Glitch) {
+  if (_s.motionAlert || _s.mood == Mood::Glitch) {
     drawGlitchOverlay(_d.getDisplayWidth(), _d.getDisplayHeight());
   }
   _d.sendBuffer();
@@ -47,9 +49,9 @@ void PetUI::render(const DateTime*) {
 
 void PetUI::drawEyes(int w, int h) {
   // === DIMENSIONES (ajustadas a tu referencia) ===
-  const int eyeW = 36;
+  const int eyeW = 38;
   const int eyeH = 24;
-  const int gap  = 10;
+  const int gap  = 6;
 
   int cx = w / 2;
   int cy = h / 2;
@@ -77,10 +79,12 @@ void PetUI::drawEyes(int w, int h) {
   _d.drawRBox(rx, yy, eyeW, openH, 6);
 
   // === PUPILAS (MÁS GRANDES) ===
-  int px = constrain(_s.lookX, -10, 10);
-  int py = constrain(_s.lookY, -8, 8);
-
   const int pupilR = 7;
+  const int pupilInset = -2;
+  const int maxPupilX = max(0, eyeW / 2 - pupilR - pupilInset);
+  const int maxPupilY = max(0, openH / 2 - pupilR - pupilInset);
+  int px = constrain(_s.lookX, -maxPupilX, maxPupilX);
+  int py = constrain(_s.lookY, -maxPupilY, maxPupilY);
 
   _d.setDrawColor(0);
   _d.drawDisc(lx + eyeW / 2 + px, yy + openH / 2 + py, pupilR);
@@ -105,6 +109,12 @@ void PetUI::drawEyes(int w, int h) {
   _d.setDrawColor(1);
   _d.drawLine(lx + browInset, browY + tilt + leanBrow, lx + eyeW - browInset, browY - leanBrow / 2);
   _d.drawLine(rx + browInset, browY + leanBrow / 2, rx + eyeW - browInset, browY + tilt - leanBrow);
+
+  if (_s.motionAlert) {
+    const int accentY = yy + openH + 4;
+    _d.drawLine(lx + 6, accentY, lx + eyeW - 6, accentY + 2);
+    _d.drawLine(rx + 6, accentY + 2, rx + eyeW - 6, accentY);
+  }
 }
 
 void PetUI::drawGlitchOverlay(int w, int h) {

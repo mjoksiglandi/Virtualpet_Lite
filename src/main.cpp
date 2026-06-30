@@ -198,6 +198,12 @@ static void applyPhaseToPet(PetPhase ph, const DateTime& dt) {
   }
 }
 
+static int8_t easeToZero(int8_t value) {
+  if (value > 0) return value - 1;
+  if (value < 0) return value + 1;
+  return 0;
+}
+
 // ---------------- SETUP ----------------
 void setup() {
   Serial.begin(115200);
@@ -247,6 +253,7 @@ void loop() {
   static String serialLine;
   static uint32_t pwrPressedAt = 0;
   static bool pwrShutdownArmed = false;
+  static uint32_t motionAlertUntil = 0;
 
   const uint32_t now = millis();
 
@@ -312,42 +319,50 @@ void loop() {
   // IMU -> mirada suave + "se cae" por inclinación sostenida (no por sacudida)
   ImuAngles ang{};
   if (imu.readAngles(ang)) {
+    pet.state().imuActive = true;
+
     // roll/pitch en grados aprox
     static float rollF = 0.0f;
     static float pitchF = 0.0f;
-    // low-pass (suave)
-    rollF  = rollF  * 0.92f + ang.roll  * 0.08f;
-    pitchF = pitchF * 0.92f + ang.pitch * 0.08f;
+    static float lastRollF = 0.0f;
+    static float lastPitchF = 0.0f;
+    // low-pass: mas responsivo para que la UI siga mejor la mano
+    rollF  = rollF  * 0.70f + ang.roll  * 0.30f;
+    pitchF = pitchF * 0.70f + ang.pitch * 0.30f;
 
     // mirada (más suave)
-    int lx = (int)(rollF / 3.0f);    // 1 px cada ~3°
-    int ly = (int)(-pitchF / 4.0f);  // 1 px cada ~4°
-    pet.state().lookX = (int8_t)constrain(lx, -8, 8);
-    pet.state().lookY = (int8_t)constrain(ly, -4, 4);
+    const float rollNorm = constrain(rollF / 34.0f, -1.0f, 1.0f);
+    const float pitchNorm = constrain(-pitchF / 24.0f, -1.0f, 1.0f);
+    pet.state().lookX = (int8_t)roundf(rollNorm * 15.0f);
+    pet.state().lookY = (int8_t)roundf(pitchNorm * 12.0f);
+    pet.state().eyeShiftX = (int8_t)roundf(rollNorm * 20.0f);
+    pet.state().eyeShiftY = (int8_t)roundf(pitchNorm * 15.0f);
 
     // inclinación sostenida -> cuerpo se desplaza a un lado
-    static uint32_t tiltSince = 0;
-    const float tiltTh = 18.0f; // grados para "caerse"
-    if (fabsf(rollF) > tiltTh) {
-      if (tiltSince == 0) tiltSince = millis();
-    } else {
-      tiltSince = 0;
-    }
-
-    int targetLean = 0;
-    if (tiltSince && (millis() - tiltSince) > 700) {
-      targetLean = (rollF > 0) ? 6 : -6;
-    }
+    int targetLean = (int)roundf(rollNorm * 3.0f);
 
     // easing del cuerpo
     int cur = pet.state().bodyLeanX;
     if (cur < targetLean) cur++;
     else if (cur > targetLean) cur--;
     pet.state().bodyLeanX = (int8_t)cur;
+    
+    const float motionDelta = fabsf(rollF - lastRollF) + fabsf(pitchF - lastPitchF);
+    if (motionDelta > 5.5f) {
+      motionAlertUntil = now + 180;
+    }
+    pet.state().motionAlert = motionAlertUntil > now;
+    lastRollF = rollF;
+    lastPitchF = pitchF;
   } else {
     // sin IMU: vuelve al centro lentamente
-    if (pet.state().bodyLeanX > 0) pet.state().bodyLeanX--;
-    else if (pet.state().bodyLeanX < 0) pet.state().bodyLeanX++;
+    pet.state().imuActive = false;
+    pet.state().motionAlert = false;
+    pet.state().lookX = easeToZero(pet.state().lookX);
+    pet.state().lookY = easeToZero(pet.state().lookY);
+    pet.state().eyeShiftX = easeToZero(pet.state().eyeShiftX);
+    pet.state().eyeShiftY = easeToZero(pet.state().eyeShiftY);
+    pet.state().bodyLeanX = easeToZero(pet.state().bodyLeanX);
   }
 
   // vida: blink y micro anim

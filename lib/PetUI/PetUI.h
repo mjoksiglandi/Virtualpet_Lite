@@ -29,6 +29,8 @@ struct PetState {
   uint8_t brow = 40;
 
   int8_t bodyLeanX = 0;
+  bool imuActive = false;
+  bool motionAlert = false;
 };
 
 class PetUI {
