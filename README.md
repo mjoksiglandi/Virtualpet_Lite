@@ -1,156 +1,181 @@
 # Virtualpet_Lite
 
-> Mascota de escritorio embebida para ESP32-S3 con OLED, RTC, IMU y buzzer.
+> Mascota embebida para `ESP32-S3` con ojos animados, `RTC`, `IMU`, modo reloj y medicion de bateria.
 
-## Resumen
+## Que es
 
-`Virtualpet_Lite` implementa una mascota de escritorio minimalista sobre un ESP32-S3. La mascota vive en una pantalla OLED monocroma, cambia de expresion segun la hora del dia, reacciona a la inclinacion del dispositivo mediante una IMU y emite sonidos simples por buzzer en transiciones relevantes.
+`Virtualpet_Lite` es un firmware para una mascota de escritorio minimalista. La UI vive en una pantalla monocroma y mezcla tres fuentes de contexto:
 
-Hoy el firmware ya tiene una arquitectura base funcional:
+- hora real desde `RTC PCF85063`
+- movimiento fisico desde `IMU QMI8658`
+- estado de bateria medido por `ADC`
 
-- Render de ojos, pupilas, cejas y parpadeo en OLED SH1106.
-- Estados de animo basados en horario usando RTC externo.
-- Lectura de inclinacion con QMI8658 para mover pupilas, escleras y postura visual.
-- Patrones de sonido no bloqueantes por cambio de fase y campana diaria.
-- Latch de energia por boton `PWR` y apagado por `long press`.
-- Modulos separados para UI, reloj e IMU.
+Hoy el proyecto ya funciona como un dispositivo autocontenido con dos modos de UI:
 
-## Idea del proyecto
+- `Pet`: ojos animados y expresivos
+- `Clock`: reloj en pantalla con fecha y bateria
 
-La intencion del repo es construir una mascota de escritorio fisica: una pequena presencia animada que acompana la jornada, expresa estados de animo y responde a su contexto sin necesidad de una interfaz compleja.
+## Estado actual
 
-La logica actual ya modela una rutina diaria:
+El firmware actual ya implementa:
 
-- `07:00-09:00`: somnolienta
-- `09:00-12:30`: activa
-- `12:30-14:00`: descanso
-- `14:00-14:30`: sueno post almuerzo
-- `14:30-18:00`: cansancio / enojo progresivo
-- `18:00-22:00`: relajada
-- `22:00-07:00`: durmiendo
+- render de ojos con esclera, pupila, highlight, cejas y parpadeo
+- seguimiento de inclinacion con `roll` y `pitch`
+- rutina diaria por fases usando `RTC`
+- menu local para ajustar fecha y hora sin recompilar
+- persistencia en `Preferences` para hora respaldada y modo de UI
+- deep sleep nocturno con wake programado a las `08:40`
+- medicion de bateria por `GPIO1`
+- escaneo I2C por serial para diagnostico
 
-## Hardware confirmado
+No esta implementado o no se usa en esta variante:
 
-La placa conectada y validada en esta etapa corresponde a una:
+- touch
+- audio funcional
+- tests automatizados
 
-- `ESP32-S3 DevKitC-1 N16R8`
-- `16 MB` flash
-- `8 MB` PSRAM embebida
-- USB nativo `USB-Serial/JTAG` de Espressif
+## Hardware real validado
 
-El firmware esta escrito alrededor de estos componentes:
+La integracion actual esta alineada a una placa `Waveshare ESP32-S3-Touch-LCD-1.69`, pero la UI usada por este repo hoy corre sobre un display `OLED I2C` externo detectado en `0x3C`.
 
-- ESP32-S3
-- OLED I2C tipo SH1106, direccion `0x3C`
-- RTC PCF85063A por I2C
-- IMU QMI8658 por I2C
-- Buzzer en GPIO `42`
-- Boton `PWR` en GPIO `40`
-- Linea de hold de energia en GPIO `41`
+Perifericos confirmados por escaneo o por codigo:
 
-Pines definidos en [include/pinout.h](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/include/pinout.h:1):
+- `0x3C`: OLED `SH1106/SSD1306`
+- `0x51`: `RTC PCF85063`
+- `0x6B`: `IMU QMI8658`
+- `GPIO1`: divisor de bateria
+- `GPIO40`: boton `PWR`
+- `GPIO41`: `PWR_HOLD`
 
-- `SCL`: GPIO `10`
-- `SDA`: GPIO `11`
-- `BTN_PWR`: GPIO `40`
-- `PWR_HOLD`: GPIO `41`
-- `BUZZER`: GPIO `42`
-
-## Alimentacion de la placa
-
-Esta placa expone dos conectores distintos de bateria:
-
-- `BAT + -`: bateria principal de la placa
-- `RTC + -`: alimentacion dedicada para el dominio del RTC
-
-Hallazgos practicos confirmados durante la integracion:
-
-- El RTC no se comporto de forma estable hasta energizar el conector `RTC + -`.
-- El circuito de `BAT` y el de `RTC` no deben asumirse como el mismo dominio.
-- Conectar alimentacion simultanea en `BAT` y `RTC` genero calentamiento y no debe considerarse una configuracion segura sin validar antes el hardware.
-
-Recomendacion actual:
-
-- Usa `BAT` para la bateria principal de la placa.
-- Usa `RTC` solo para pruebas controladas del respaldo del reloj y solo con una bateria compatible con ese dominio.
-
-## Estructura del proyecto
+Escaneo real observado:
 
 ```text
-src/main.cpp              Flujo principal del firmware
-include/pinout.h          Pines y direccion I2C
-include/config.h          Configuracion global reservada
-lib/PetUI/                Render y estado visual de la mascota
-lib/RtcClock/             Abstraccion minima del RTC
-lib/ImuQmi8658/           Abstraccion minima de la IMU
-lib/Melodies/             Reproduccion no bloqueante de tonos integrada en main
+I2C summary: 0x3C, 0x51, 0x6B, 0x7E
 ```
 
-## Arquitectura actual
+`0x7E` se trata como respuesta reservada o ghost, no como periferico funcional.
 
-### `main.cpp`
+## Pines usados
 
-Coordina todo el comportamiento del dispositivo:
+Definidos en [include/pinout.h](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/include/pinout.h):
 
-- Inicializa I2C, display, RTC, IMU y buzzer.
-- Activa el `power hold` para que la placa permanezca encendida tras soltar `PWR`.
-- Consulta la hora una vez por segundo.
-- Calcula la fase del dia y ajusta `mood` y `brow`.
-- Reproduce un patron sonoro no bloqueante al cambiar de fase.
-- Dispara una campana diaria al entrar a la fase de tarde relajada.
-- Lee la inclinacion y la traduce en desplazamiento de pupila, esclera y leve `body lean`.
-- Atiende comandos seriales para consultar y ajustar el RTC.
-- Permite apagado intencional mediante `long press` del boton `PWR`.
-- Refresca la UI a aproximadamente 60 FPS.
+- `GPIO10`: `I2C SCL`
+- `GPIO11`: `I2C SDA`
+- `GPIO1`: `BAT ADC`
+- `GPIO40`: `BTN_PWR`
+- `GPIO41`: `PWR_HOLD`
+- `GPIO255`: buzzer deshabilitado en esta variante
 
-### `PetUI`
+## Modos de UI
 
-La UI actual dibuja una cara simple y expresiva:
+### Pet
 
-- Ojos redondeados compuestos por esclera, pupila, highlight y cejas
-- Pupilas con micro movimiento cuando la IMU no esta controlando la mirada
-- Parpadeo periodico
-- Cejas segun estado emocional
-- Movimiento de esclera y pupila afinado desde la IMU
-- Leve sobrepaso controlado de pupila fuera de la esclera para dar mas expresividad
-- Overlay glitch reservado para un modo especial
+Es el modo principal. Muestra los ojos y aplica:
 
-### `RtcClock`
+- estado emocional por horario
+- seguimiento IMU
+- micro movimiento cuando la IMU no domina la mirada
+- `motion alert` visual ante movimiento brusco
 
-Implementa una capa directa sobre `Wire` para leer y escribir registros del PCF85063A. El proyecto usa esta hora como fuente principal para la rutina diaria de la mascota.
+### Clock
 
-### `ImuQmi8658`
+Muestra:
 
-Lee acelerometro y giroscopio desde la libreria `QMI8658` y calcula `roll` y `pitch` a partir de aceleracion para obtener una respuesta estable.
+- hora `HH:MM:SS`
+- fecha `dd-mm-yyyy`
+- bateria estimada como `BAT xx% x.xxV`
 
-### `Melodies`
+La medicion de bateria se toma desde `GPIO1` con divisor `200k / 100k`, siguiendo la referencia de Waveshare para la `ESP32-S3-Touch-LCD-1.69`. La escala actual fue calibrada en hardware con factor `3.16`.
 
-La libreria `Melodies` ya esta integrada en el firmware principal y se usa para:
+## Interaccion por boton
 
-- sonido de arranque
-- cues por cambio de fase
-- campana programada de las 18:00
+Con el boton `PWR`:
 
-La reproduccion es no bloqueante y se actualiza desde el loop principal.
+- `1 click`: alterna entre `Pet` y `Clock`
+- `2 clicks`: abre `SET CLOCK`
+- `hold largo`: guarda hora en el menu o apaga la placa fuera del menu
 
-## Dependencias
+## Menu de reloj
 
-Definidas en [platformio.ini](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/platformio.ini:1):
+El menu `SET CLOCK` permite editar:
 
-- `olikraus/U8g2`
-- `lahavg/QMI8658`
-- `solderedelectronics/Soldered PCF85063A RTC Library`
+- dia
+- mes
+- anio
+- hora
+- minuto
 
-## Build y entorno
+Comportamiento:
 
-Repositorio remoto actual:
+- inclinacion lateral: edita el campo activo
+- click corto: avanza al siguiente campo
+- hold largo: guarda en `RTC` y en `Preferences`
 
-- GitHub: [mjoksiglandi/Virtualpet_Lite](https://github.com/mjoksiglandi/Virtualpet_Lite)
+Cuando no hay hora valida en `RTC`, el menu parte desde:
 
-Comando de compilacion:
+1. hora actual del `RTC`, si existe
+2. ultimo backup guardado en flash
+3. valor por defecto `2026-01-01 08:40:00`
+
+## Comportamiento diario
+
+La mascota cambia segun la hora:
+
+- `07:00-09:00`: sleepy
+- `09:00-12:30`: active
+- `12:30-14:00`: lunch rest
+- `14:00-14:30`: post lunch nap
+- `14:30-18:00`: work to angry
+- `18:00-22:00`: relax
+- `22:00-07:00`: night sleep
+
+En `NightSleep`, si el `RTC` es valido y no estas en el menu de reloj, entra en deep sleep y programa wake para las `08:40`.
+
+## Gestos IMU
+
+La IMU se usa para dos cosas:
+
+- movimiento continuo de ojos y leve `body lean`
+- gestos temporales
+
+Gestos implementados:
+
+- inclinacion sostenida hacia arriba: `Sleepy`
+- inclinacion sostenida hacia abajo: `Angry`
+- shake fuerte: efecto `Glitch`
+
+## Comandos seriales
+
+Disponibles desde `HELP`:
+
+```text
+BAT?
+I2C?
+RTC?
+SET_RTC YYYY-MM-DD HH:MM:SS
+```
+
+Ejemplos:
+
+```text
+RTC?
+BAT?
+I2C?
+SET_RTC 2026-07-01 08:40:00
+```
+
+## Build
+
+Compilar:
 
 ```powershell
 & "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run
+```
+
+Flashear:
+
+```powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -t upload
 ```
 
 Monitor serial:
@@ -159,93 +184,27 @@ Monitor serial:
 & "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" device monitor
 ```
 
-## Comandos seriales
-
-El firmware expone comandos utiles por puerto serie para mantenimiento del RTC:
+## Estructura del repo
 
 ```text
-HELP
-RTC?
-SET_RTC YYYY-MM-DD HH:MM:SS
+src/main.cpp          Orquestacion del firmware
+include/pinout.h      Pines y constantes de hardware
+lib/PetUI/            Render y estado visual
+lib/RtcClock/         Driver minimo del PCF85063
+lib/ImuQmi8658/       Wrapper de IMU
+lib/Melodies/         Audio no bloqueante, hoy deshabilitado por pinout
+ROADMAP.md            Hoja de ruta del proyecto
 ```
-
-Ejemplo:
-
-```text
-SET_RTC 2026-06-30 15:00:00
-```
-
-Esto permite:
-
-- consultar si el RTC tiene hora valida
-- ver el estado de `osc_stopped`
-- ajustar la fecha y hora sin recompilar
-
-## Estado actual
-
-Estado funcional general: **prototipo vertical avanzado**.
-
-Fase 1 actual: **tecnicamente cerrada**, con una nota pendiente de recomendacion final para la bateria del dominio `RTC + -`.
-
-Lo que ya esta implementado:
-
-- Mascota renderizada y animada.
-- Modelo de estados por horario.
-- Lectura de RTC y de IMU.
-- Movimiento de ojos afinado sobre hardware real con rango ampliado en OLED.
-- Audio no bloqueante por buzzer.
-- Latch de energia funcional.
-- Apagado por `long press` del boton `PWR`.
-- Ajuste de RTC por comandos seriales.
-- Separacion modular suficiente para seguir iterando.
-
-Lo que todavia esta incompleto o en transicion:
-
-- No hay tests automatizados.
-- No hay interfaz local en pantalla para configurar hora.
-- `config.h` esta reservado pero vacio.
-
-## Hallazgos de build documentados
-
-Durante la revision tecnica del `2026-06-30` se detectaron y resolvieron dos puntos base:
-
-- El firmware usaba una API LEDC antigua (`ledcSetup` y `ledcAttachPin`).
-- PlatformIO estaba resolviendo una variante generica `N8` que no representaba el hardware real conectado.
-
-Estado actual luego del ajuste:
-
-- El buzzer ya usa la API LEDC compatible con el core actual de Arduino-ESP32 3.x.
-- `platformio.ini` ahora apunta a `esp32-s3-devkitc1-n16r8`.
-- El build actual resuelve correctamente `16 MB Flash` y `8 MB PSRAM`.
-- La compilacion completa termina en `SUCCESS`.
-- La placa permanece encendida tras soltar `PWR` gracias al hold en `GPIO41`.
-- El apagado intencional se ejecuta por `long press` en `GPIO40`.
-- El RTC fue validado en funcionamiento real con el dominio `RTC + -` energizado.
-
-## Ajustes recientes de UI + IMU
-
-Durante la afinacion sobre hardware real se hicieron varios cambios para que la mascota use mejor el area util del display y responda de forma mas natural:
-
-- Se aumento la velocidad de reaccion de la mirada.
-- Se elimino un segundo desplazamiento retardado causado por `bodyLeanX`.
-- Se sincronizo el movimiento de pupila y esclera para evitar una sensacion de doble etapa.
-- Se redujo el `gap` entre ojos y se agrando levemente la esclera.
-- La pupila ahora puede sobrepasar de forma controlada el borde de la esclera para una expresion mas viva.
-
-El resultado actual prioriza:
-
-- seguimiento rapido
-- mejor uso del OLED
-- mayor expresividad
-- control visual suficientemente estable en hardware real
 
 ## Limitaciones conocidas
 
-- La UX actual sigue siendo principalmente visual y sonora.
-- No hay persistencia de configuracion ni preferencias.
-- No hay documentacion de ensamblaje fisico o wiring mas alla de los pines en codigo.
-- El dominio `RTC + -` requiere validacion adicional de bateria compatible antes de recomendarlo como configuracion final de campo.
+- El porcentaje de bateria es una aproximacion lineal entre `3.30V` y `4.20V`.
+- El valor `usb_likely` se infiere por voltaje alto, no por deteccion dedicada de carga.
+- El buzzer no esta activo en esta variante de hardware.
+- El touch no participa en la UI actual.
+- No hay suite de tests.
 
-## Documentos relacionados
+## Referencias relacionadas
 
-- Roadmap: [ROADMAP.md](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/ROADMAP.md)
+- Hoja de ruta: [ROADMAP.md](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/ROADMAP.md)
+- Hardware y diagnostico: [docs/HARDWARE.md](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/docs/HARDWARE.md)

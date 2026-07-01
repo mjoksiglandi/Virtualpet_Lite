@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <esp_sleep.h>
+#include <Preferences.h>
 #include <Wire.h>
 #include <U8g2lib.h>
 #include <driver/gpio.h>
@@ -22,12 +23,24 @@ static PetUI pet(u8g2);
 // RTC + IMU
 static RtcClock rtc;
 static ImuQmi8658 imu;
+static Preferences prefs;
+static bool hasSavedClockBackup = false;
+static DateTime savedClockBackup{2026, 1, 1, 8, 40, 0};
+enum class UiMode : uint8_t {
+  Pet = 0,
+  Clock = 1
+};
+static UiMode uiMode = UiMode::Pet;
 
 // ---------------- BUZZER ----------------
 static constexpr int BUZZER = PIN_BUZZER;
 static constexpr int BUZZ_CH = 0;
 static constexpr int BUZZ_RES = 8;
 static constexpr uint32_t PWR_LONG_PRESS_MS = 1500;
+static constexpr uint32_t PWR_CLICK_MS = 350;
+static constexpr uint32_t PWR_DOUBLE_CLICK_GAP_MS = 450;
+static constexpr uint32_t MENU_TILT_REPEAT_MS = 180;
+static constexpr float MENU_TILT_THRESHOLD = 0.38f;
 
 // ---------------- HORARIO / FASES ----------------
 enum class PetPhase : uint8_t {
@@ -78,6 +91,105 @@ static void printRtcSnapshot() {
   Serial.printf("RTC ctrl_stop=%s\n", controlOk ? (clockStopped ? "yes" : "no") : "unknown");
 }
 
+struct BatterySnapshot {
+  bool valid = false;
+  bool usbLikely = false;
+  uint16_t raw = 0;
+  uint16_t mv = 0;
+  uint8_t percent = 0;
+};
+
+static BatterySnapshot g_battery;
+static constexpr float BATTERY_ADC_SCALE = 3.16f;
+
+static const char* i2cDeviceLabel(uint8_t addr) {
+  if (addr == OLED_I2C_ADDR) return "OLED SH1106/SSD1306";
+  if (addr == 0x51) return "RTC PCF85063";
+  if (addr == 0x15) return "Touch CST816T";
+  if (addr == 0x6A || addr == 0x6B) return "IMU QMI8658?";
+  if (addr >= 0x78) return "Reserved / ghost response";
+  return "Unknown";
+}
+
+static void scanI2cBus() {
+  uint8_t found[16];
+  uint8_t foundCount = 0;
+
+  Serial.printf("I2C scan on SDA=%d SCL=%d\n", PIN_I2C_SDA, PIN_I2C_SCL);
+  for (uint8_t addr = 1; addr < 0x7F; ++addr) {
+    Wire.beginTransmission(addr);
+    const uint8_t err = Wire.endTransmission();
+    if (err == 0) {
+      if (foundCount < (sizeof(found) / sizeof(found[0]))) {
+        found[foundCount++] = addr;
+      }
+      Serial.printf("  - 0x%02X  %s\n", addr, i2cDeviceLabel(addr));
+    }
+  }
+
+  if (foundCount == 0) {
+    Serial.println("  no devices found");
+    return;
+  }
+
+  Serial.print("I2C summary: ");
+  for (uint8_t i = 0; i < foundCount; ++i) {
+    if (i > 0) Serial.print(", ");
+    Serial.printf("0x%02X", found[i]);
+  }
+  Serial.println();
+}
+
+static uint16_t readBatteryMillivolts() {
+  const uint32_t samples = 12;
+  uint32_t acc = 0;
+  for (uint32_t i = 0; i < samples; ++i) {
+    acc += (uint32_t)analogRead(PIN_BAT_ADC);
+    delay(2);
+  }
+
+  const float raw = (float)acc / (float)samples;
+  const float vadc = raw * (3.3f / 4095.0f);
+  const float vbatt = vadc * BATTERY_ADC_SCALE;
+  return (uint16_t)roundf(vbatt * 1000.0f);
+}
+
+static uint8_t batteryPercentFromMv(uint16_t mv) {
+  if (mv <= 3300) return 0;
+  if (mv >= 4200) return 100;
+  return (uint8_t)(((uint32_t)(mv - 3300) * 100u) / 900u);
+}
+
+static void updateBatterySnapshot(uint32_t nowMs) {
+  static uint32_t nextBatteryAt = 0;
+  static float filteredMv = 0.0f;
+
+  if (nextBatteryAt != 0 && nowMs < nextBatteryAt) {
+    return;
+  }
+
+  const uint16_t mv = readBatteryMillivolts();
+  if (filteredMv <= 0.0f) filteredMv = (float)mv;
+  else filteredMv = filteredMv * 0.75f + (float)mv * 0.25f;
+
+  g_battery.valid = true;
+  g_battery.raw = (uint16_t)analogRead(PIN_BAT_ADC);
+  g_battery.mv = (uint16_t)roundf(filteredMv);
+  g_battery.percent = batteryPercentFromMv(g_battery.mv);
+  g_battery.usbLikely = g_battery.mv >= 4150;
+  nextBatteryAt = nowMs + 1500;
+}
+
+static void printBatterySnapshot() {
+  Serial.printf(
+    "BAT raw=%u mv=%u pct=%u usb_likely=%s\n",
+    g_battery.raw,
+    g_battery.mv,
+    g_battery.percent,
+    g_battery.usbLikely ? "yes" : "no"
+  );
+}
+
 static bool parseDateTime(const String& value, DateTime& out) {
   int yy, mo, dd, hh, mi, ss;
   if (sscanf(value.c_str(), "%d-%d-%d %d:%d:%d", &yy, &mo, &dd, &hh, &mi, &ss) != 6) {
@@ -100,6 +212,23 @@ static bool parseDateTime(const String& value, DateTime& out) {
   return true;
 }
 
+static void saveClockBackup(const DateTime& dt) {
+  savedClockBackup = dt;
+  hasSavedClockBackup = true;
+  prefs.putBool("has_time", true);
+  prefs.putUShort("year", dt.year);
+  prefs.putUChar("month", dt.month);
+  prefs.putUChar("day", dt.day);
+  prefs.putUChar("hour", dt.hour);
+  prefs.putUChar("minute", dt.minute);
+  prefs.putUChar("second", dt.second);
+}
+
+static void saveUiMode(UiMode mode) {
+  uiMode = mode;
+  prefs.putUChar("ui_mode", (uint8_t)mode);
+}
+
 static void handleSerialCommand(const String& raw) {
   String cmd = raw;
   cmd.trim();
@@ -107,8 +236,20 @@ static void handleSerialCommand(const String& raw) {
 
   if (cmd.equalsIgnoreCase("HELP")) {
     Serial.println("Commands:");
+    Serial.println("  BAT?");
+    Serial.println("  I2C?");
     Serial.println("  RTC?");
     Serial.println("  SET_RTC YYYY-MM-DD HH:MM:SS");
+    return;
+  }
+
+  if (cmd.equalsIgnoreCase("BAT?")) {
+    printBatterySnapshot();
+    return;
+  }
+
+  if (cmd.equalsIgnoreCase("I2C?")) {
+    scanI2cBus();
     return;
   }
 
@@ -130,6 +271,7 @@ static void handleSerialCommand(const String& raw) {
       return;
     }
 
+    saveClockBackup(dt);
     Serial.println("RTC updated");
     printRtcSnapshot();
     return;
@@ -206,6 +348,17 @@ struct GestureOverride {
   uint32_t untilMs = 0;
 };
 
+struct ClockMenuState {
+  bool active = false;
+  bool dirty = false;
+  bool rtcValidOnEntry = false;
+  bool usingBackupSeed = false;
+  uint8_t fieldIndex = 0;
+  uint32_t lastInteractionMs = 0;
+  uint32_t lastTiltStepMs = 0;
+  DateTime draft{2026, 1, 1, 8, 40, 0};
+};
+
 static int8_t easeToZero(int8_t value) {
   if (value > 0) return value - 1;
   if (value < 0) return value + 1;
@@ -233,6 +386,39 @@ static void advanceOneDay(DateTime& dt) {
       dt.year++;
     }
   }
+}
+
+static void clampDateTime(DateTime& dt) {
+  dt.year = constrain((int)dt.year, 2020, 2099);
+  dt.month = (uint8_t)constrain((int)dt.month, 1, 12);
+  dt.day = (uint8_t)constrain((int)dt.day, 1, (int)daysInMonth(dt.year, dt.month));
+  dt.hour = (uint8_t)constrain((int)dt.hour, 0, 23);
+  dt.minute = (uint8_t)constrain((int)dt.minute, 0, 59);
+  dt.second = (uint8_t)constrain((int)dt.second, 0, 59);
+}
+
+static void applyMenuDelta(DateTime& dt, uint8_t fieldIndex, int delta) {
+  if (fieldIndex == 0) dt.day = (uint8_t)constrain((int)dt.day + delta, 1, 31);
+  else if (fieldIndex == 1) dt.month = (uint8_t)constrain((int)dt.month + delta, 1, 12);
+  else if (fieldIndex == 2) dt.year = (uint16_t)constrain((int)dt.year + delta, 2020, 2099);
+  else if (fieldIndex == 3) dt.hour = (uint8_t)constrain((int)dt.hour + delta, 0, 23);
+  else if (fieldIndex == 4) dt.minute = (uint8_t)constrain((int)dt.minute + delta, 0, 59);
+  clampDateTime(dt);
+}
+
+static void openClockMenu(ClockMenuState& menu, bool rtcHasTime, const DateTime& current) {
+  menu.active = true;
+  menu.dirty = false;
+  menu.rtcValidOnEntry = rtcHasTime;
+  menu.usingBackupSeed = !rtcHasTime && hasSavedClockBackup;
+  menu.fieldIndex = 0;
+  menu.lastInteractionMs = millis();
+  menu.lastTiltStepMs = 0;
+  if (rtcHasTime) menu.draft = current;
+  else if (hasSavedClockBackup) menu.draft = savedClockBackup;
+  else menu.draft = DateTime{2026, 1, 1, 8, 40, 0};
+  menu.draft.second = 0;
+  clampDateTime(menu.draft);
 }
 
 static uint32_t secondsUntilNextWake(const DateTime& dt) {
@@ -298,11 +484,29 @@ void setup() {
   u8g2.setI2CAddress(OLED_I2C_ADDR << 1);
   u8g2.setContrast(200);
 
+  analogReadResolution(12);
+  analogSetPinAttenuation(PIN_BAT_ADC, ADC_11db);
+  pinMode(PIN_BAT_ADC, INPUT);
+
   // Periféricos
   Melodies::begin(BUZZER, BUZZ_CH, BUZZ_RES);
 
   // RTC
   const bool rtcOk = rtc.begin();
+  scanI2cBus();
+  prefs.begin("virtualpet", false);
+  hasSavedClockBackup = prefs.getBool("has_time", false);
+  if (hasSavedClockBackup) {
+    savedClockBackup.year = prefs.getUShort("year", 2026);
+    savedClockBackup.month = prefs.getUChar("month", 1);
+    savedClockBackup.day = prefs.getUChar("day", 1);
+    savedClockBackup.hour = prefs.getUChar("hour", 8);
+    savedClockBackup.minute = prefs.getUChar("minute", 40);
+    savedClockBackup.second = prefs.getUChar("second", 0);
+    clampDateTime(savedClockBackup);
+  }
+  const uint8_t storedUiMode = prefs.getUChar("ui_mode", (uint8_t)UiMode::Pet);
+  uiMode = (storedUiMode == (uint8_t)UiMode::Clock) ? UiMode::Clock : UiMode::Pet;
 
   // IMU
   imu.begin();
@@ -330,8 +534,12 @@ void loop() {
   static String serialLine;
   static uint32_t pwrPressedAt = 0;
   static bool pwrShutdownArmed = false;
+  static bool pwrMenuHoldHandled = false;
+  static uint32_t pwrReleasedAt = 0;
+  static uint8_t pwrClickCount = 0;
   static uint32_t motionAlertUntil = 0;
   static GestureOverride gestureOverride;
+  static ClockMenuState clockMenu;
   static uint32_t shakeCooldownUntil = 0;
   static bool shakeArmed = true;
   static uint32_t tiltGestureCooldownUntil = 0;
@@ -339,6 +547,7 @@ void loop() {
   static int8_t pitchHoldDir = 0;
 
   const uint32_t now = millis();
+  updateBatterySnapshot(now);
 
   while (Serial.available() > 0) {
     const char c = (char)Serial.read();
@@ -359,7 +568,26 @@ void loop() {
     if (pwrPressedAt == 0) {
       pwrPressedAt = now;
       pwrShutdownArmed = false;
-    } else if (!pwrShutdownArmed && (now - pwrPressedAt) >= PWR_LONG_PRESS_MS) {
+      pwrMenuHoldHandled = false;
+    } else if (clockMenu.active && !pwrMenuHoldHandled && (now - pwrPressedAt) >= PWR_LONG_PRESS_MS) {
+      pwrMenuHoldHandled = true;
+      clockMenu.draft.second = 0;
+      clampDateTime(clockMenu.draft);
+      if (rtc.set(clockMenu.draft)) {
+        saveClockBackup(clockMenu.draft);
+        dt = clockMenu.draft;
+        hasTime = true;
+        currentPhase = PetPhase::Unknown;
+        nextRtcAt = 0;
+        clockMenu.active = false;
+        clockMenu.dirty = false;
+        Melodies::play(Melodies::Tune::PhaseTick);
+        Serial.println("RTC updated from device menu");
+      } else {
+        Melodies::play(Melodies::Tune::PhaseAlert);
+        Serial.println("RTC update from device menu failed");
+      }
+    } else if (!clockMenu.active && !pwrShutdownArmed && (now - pwrPressedAt) >= PWR_LONG_PRESS_MS) {
       pwrShutdownArmed = true;
       Serial.println("Power button long press: shutting down");
       Melodies::play(Melodies::Tune::PhaseAlert);
@@ -367,8 +595,35 @@ void loop() {
       powerHold(false);
     }
   } else {
+    if (pwrPressedAt != 0) {
+      const uint32_t pressDur = now - pwrPressedAt;
+      if (clockMenu.active) {
+        if (!pwrMenuHoldHandled && pressDur <= PWR_CLICK_MS) {
+          clockMenu.fieldIndex = (uint8_t)((clockMenu.fieldIndex + 1) % 5);
+          clockMenu.lastInteractionMs = now;
+        }
+      } else if (!pwrShutdownArmed && pressDur <= PWR_CLICK_MS) {
+        pwrClickCount++;
+        pwrReleasedAt = now;
+      }
+    }
     pwrPressedAt = 0;
     pwrShutdownArmed = false;
+    pwrMenuHoldHandled = false;
+  }
+
+  if (!clockMenu.active && pwrClickCount > 0 && (now - pwrReleasedAt) > PWR_DOUBLE_CLICK_GAP_MS) {
+    if (pwrClickCount >= 2) {
+      DateTime seed = hasTime ? dt : (hasSavedClockBackup ? savedClockBackup : DateTime{2026, 1, 1, 8, 40, 0});
+      openClockMenu(clockMenu, hasTime && rtc.valid(), seed);
+      Melodies::play(Melodies::Tune::PhaseDouble);
+      Serial.println("Clock menu opened");
+    } else if (pwrClickCount == 1) {
+      saveUiMode(uiMode == UiMode::Pet ? UiMode::Clock : UiMode::Pet);
+      Melodies::play(Melodies::Tune::PhaseTick);
+      Serial.printf("UI mode: %s\n", uiMode == UiMode::Clock ? "clock" : "pet");
+    }
+    pwrClickCount = 0;
   }
 
   // RTC read cada 1s
@@ -397,7 +652,7 @@ void loop() {
 
       applyPhaseToPet(ph, dt);
 
-      if (rtc.valid() && ph == PetPhase::NightSleep) {
+      if (!clockMenu.active && rtc.valid() && ph == PetPhase::NightSleep) {
         delay(120);
         enterNightDeepSleep(dt);
       }
@@ -421,6 +676,18 @@ void loop() {
     // mirada (más suave)
     const float rollNorm = constrain(rollF / 34.0f, -1.0f, 1.0f);
     const float pitchNorm = constrain(-pitchF / 24.0f, -1.0f, 1.0f);
+
+    if (clockMenu.active) {
+      if (fabsf(rollNorm) >= MENU_TILT_THRESHOLD && (now - clockMenu.lastTiltStepMs) >= MENU_TILT_REPEAT_MS) {
+        applyMenuDelta(clockMenu.draft, clockMenu.fieldIndex, rollNorm > 0.0f ? 1 : -1);
+        clockMenu.dirty = true;
+        clockMenu.lastTiltStepMs = now;
+        clockMenu.lastInteractionMs = now;
+      } else if (fabsf(rollNorm) < (MENU_TILT_THRESHOLD * 0.55f)) {
+        clockMenu.lastTiltStepMs = 0;
+      }
+    }
+
     pet.state().lookX = (int8_t)roundf(rollNorm * 15.0f);
     pet.state().lookY = (int8_t)roundf(pitchNorm * 12.0f);
     pet.state().eyeShiftX = (int8_t)roundf(rollNorm * 20.0f);
@@ -462,7 +729,7 @@ void loop() {
       motionAlertUntil = now + 700;
     }
 
-    const bool pitchHeld = fabsf(pitchNorm) > 0.72f;
+    const bool pitchHeld = !clockMenu.active && fabsf(pitchNorm) > 0.72f;
     const int8_t pitchDir = (pitchNorm > 0.0f) ? 1 : -1;
     if (pitchHeld) {
       if (pitchHoldSince == 0 || pitchHoldDir != pitchDir) {
@@ -476,12 +743,10 @@ void loop() {
           gestureOverride.mood = Mood::Sleepy;
           gestureOverride.brow = 6;
           gestureOverride.untilMs = now + 1400;
-          Melodies::beep(920, 80, 25);
         } else {
           gestureOverride.mood = Mood::Angry;
           gestureOverride.brow = 92;
           gestureOverride.untilMs = now + 1400;
-          Melodies::play(Melodies::Tune::PhaseDouble);
         }
       }
     } else {
@@ -508,13 +773,37 @@ void loop() {
   pet.tickMoodAuto();
   Melodies::tick();
 
-  if (gestureOverride.untilMs > now) {
+  if (!clockMenu.active && gestureOverride.untilMs > now) {
     pet.state().mood = gestureOverride.mood;
     pet.state().brow = gestureOverride.brow;
   }
 
   // render (sin hora arriba)
-  pet.render(hasTime ? &dt : nullptr);
+  ClockMenuView menuView{};
+  ClockFaceView clockView{};
+  if (clockMenu.active) {
+    menuView.active = true;
+    menuView.rtcValid = clockMenu.rtcValidOnEntry;
+    menuView.dirty = clockMenu.dirty;
+    menuView.fieldIndex = clockMenu.fieldIndex;
+    menuView.value = clockMenu.draft;
+  }
+  if (!clockMenu.active && uiMode == UiMode::Clock) {
+    clockView.active = true;
+    clockView.rtcValid = hasTime && rtc.valid();
+    clockView.batteryVisible = g_battery.valid;
+    clockView.batteryUsb = g_battery.usbLikely;
+    clockView.batteryPercent = g_battery.percent;
+    clockView.batteryMv = g_battery.mv;
+    if (hasTime) clockView.value = dt;
+    else if (hasSavedClockBackup) clockView.value = savedClockBackup;
+    else clockView.value = DateTime{2026, 1, 1, 8, 40, 0};
+  }
+  pet.render(
+    hasTime ? &dt : nullptr,
+    clockMenu.active ? &menuView : nullptr,
+    clockView.active ? &clockView : nullptr
+  );
 
   delay(16); // ~60fps
 }

@@ -1,46 +1,10 @@
+Librerias internas del firmware.
 
-This directory is intended for project specific (private) libraries.
-PlatformIO will compile them to static libraries and link into the executable file.
+Modulos actuales:
 
-The source code of each library should be placed in a separate directory
-("lib/your_library_name/[Code]").
+- `PetUI`: render y estado visual de la mascota
+- `RtcClock`: acceso minimo al `PCF85063`
+- `ImuQmi8658`: lectura de IMU y calculo de angulos
+- `Melodies`: reproduccion de tonos no bloqueante; hoy queda sin salida por pinout
 
-For example, see the structure of the following example libraries `Foo` and `Bar`:
-
-|--lib
-|  |
-|  |--Bar
-|  |  |--docs
-|  |  |--examples
-|  |  |--src
-|  |     |- Bar.c
-|  |     |- Bar.h
-|  |  |- library.json (optional. for custom build options, etc) https://docs.platformio.org/page/librarymanager/config.html
-|  |
-|  |--Foo
-|  |  |- Foo.c
-|  |  |- Foo.h
-|  |
-|  |- README --> THIS FILE
-|
-|- platformio.ini
-|--src
-   |- main.c
-
-Example contents of `src/main.c` using Foo and Bar:
-```
-#include <Foo.h>
-#include <Bar.h>
-
-int main (void)
-{
-  ...
-}
-
-```
-
-The PlatformIO Library Dependency Finder will find automatically dependent
-libraries by scanning project source files.
-
-More information about PlatformIO Library Dependency Finder
-- https://docs.platformio.org/page/librarymanager/ldf.html
+La mayor parte de la orquestacion sigue en `src/main.cpp`, pero estos modulos concentran la logica reusable del proyecto.

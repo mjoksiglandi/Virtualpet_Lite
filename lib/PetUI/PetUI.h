@@ -33,11 +33,33 @@ struct PetState {
   bool motionAlert = false;
 };
 
+struct ClockMenuView {
+  bool active = false;
+  bool rtcValid = false;
+  bool dirty = false;
+  uint8_t fieldIndex = 0;
+  DateTime value{2026, 1, 1, 8, 0, 0};
+};
+
+struct ClockFaceView {
+  bool active = false;
+  bool rtcValid = false;
+  bool batteryVisible = false;
+  bool batteryUsb = false;
+  uint8_t batteryPercent = 0;
+  uint16_t batteryMv = 0;
+  DateTime value{2026, 1, 1, 8, 0, 0};
+};
+
 class PetUI {
 public:
   explicit PetUI(U8G2& d);
 
-  void render(const DateTime* dtNullable);
+  void render(
+    const DateTime* dtNullable,
+    const ClockMenuView* menuNullable = nullptr,
+    const ClockFaceView* clockNullable = nullptr
+  );
 
   // usados por main.cpp
   void tickBlink();
@@ -56,4 +78,6 @@ private:
 
   void drawEyes(int w, int h);
   void drawGlitchOverlay(int w, int h);
+  void drawClockMenu(int w, int h, const ClockMenuView& menu);
+  void drawClockFace(int w, int h, const ClockFaceView& clock);
 };

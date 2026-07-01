@@ -73,6 +73,11 @@ void begin(uint8_t gpioBuzzer, uint8_t ledcChannel, uint16_t baseResolutionBits)
   g_ch   = ledcChannel;
   g_res  = (uint8_t)baseResolutionBits;
 
+  if (g_gpio == 255) {
+    stop();
+    return;
+  }
+
   ledcAttachChannel(g_gpio, 2000, g_res, g_ch);
   stop();
 }
