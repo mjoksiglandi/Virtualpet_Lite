@@ -1,103 +1,71 @@
-# Virtualpet_Lite
+# Virtualpet Lite
 
-> Mascota embebida para `ESP32-S3` con ojos animados, `RTC`, `IMU`, modo reloj y medicion de bateria.
+> Mascota embebida para `ESP32-S3` con ojos expresivos, `RTC`, `IMU`, modo reloj y proteccion de bateria.
 
-## Que es
+## Por que existe
 
-`Virtualpet_Lite` es un firmware para una mascota de escritorio minimalista. La UI vive en una pantalla monocroma y mezcla tres fuentes de contexto:
+Este proyecto explora una mascota de escritorio minimalista que vive en una pantalla monocroma y reacciona al contexto real del dispositivo:
 
-- hora real desde `RTC PCF85063`
-- movimiento fisico desde `IMU QMI8658`
-- estado de bateria medido por `ADC`
+- la hora define su ritmo diario
+- la IMU define hacia donde mira y como reacciona al movimiento
+- la bateria define cuando debe proteger su autonomia
 
-Hoy el proyecto ya funciona como un dispositivo autocontenido con dos modos de UI:
+La idea no es solo mostrar ojos animados. La meta es que la pet se sienta consistente, con personalidad y con comportamiento util en hardware real.
 
-- `Pet`: ojos animados y expresivos
-- `Clock`: reloj en pantalla con fecha y bateria
-
-## Estado actual
+## Que hace hoy
 
 El firmware actual ya implementa:
 
-- render de ojos con esclera, pupila, highlight, cejas y parpadeo
-- seguimiento de inclinacion con `roll` y `pitch`
-- rutina diaria por fases usando `RTC`
+- modo `Pet` con ojos deformables, pupilas, parpadeo y microanimaciones
+- modo `Clock` con hora, fecha y bateria
+- rutina diaria por fases usando `RTC PCF85063`
+- reaccion a inclinacion, sacudidas y movimiento sostenido usando `QMI8658`
 - menu local para ajustar fecha y hora sin recompilar
-- persistencia en `Preferences` para hora respaldada y modo de UI
-- deep sleep nocturno con wake programado a las `08:40`
-- medicion de bateria por `GPIO1`
-- escaneo I2C por serial para diagnostico
+- persistencia en `Preferences` para backup de hora y modo de UI
+- deep sleep nocturno con wake a las `08:40`
+- deep sleep por bateria baja cuando cae a `30%`
+- medicion de bateria por `ADC` en `GPIO1`
+- diagnostico por serial para `BAT`, `I2C` y `RTC`
 
-No esta implementado o no se usa en esta variante:
+## Quick start
 
-- touch
-- audio funcional
-- tests automatizados
+### Requisitos
 
-## Hardware real validado
+- `PlatformIO`
+- una `ESP32-S3`
+- un `OLED I2C` en `0x3C`
+- `RTC PCF85063`
+- `IMU QMI8658`
 
-La integracion actual esta alineada a una placa `Waveshare ESP32-S3-Touch-LCD-1.69`, pero la UI usada por este repo hoy corre sobre un display `OLED I2C` externo detectado en `0x3C`.
+### Compilar
 
-Perifericos confirmados por escaneo o por codigo:
-
-- `0x3C`: OLED `SH1106/SSD1306`
-- `0x51`: `RTC PCF85063`
-- `0x6B`: `IMU QMI8658`
-- `GPIO1`: divisor de bateria
-- `GPIO40`: boton `PWR`
-- `GPIO41`: `PWR_HOLD`
-
-Escaneo real observado:
-
-```text
-I2C summary: 0x3C, 0x51, 0x6B, 0x7E
+```powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run
 ```
 
-`0x7E` se trata como respuesta reservada o ghost, no como periferico funcional.
+### Flashear
 
-## Pines usados
+```powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -t upload
+```
 
-Definidos en [include/pinout.h](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/include/pinout.h):
+### Monitor serial
 
-- `GPIO10`: `I2C SCL`
-- `GPIO11`: `I2C SDA`
-- `GPIO1`: `BAT ADC`
-- `GPIO40`: `BTN_PWR`
-- `GPIO41`: `PWR_HOLD`
-- `GPIO255`: buzzer deshabilitado en esta variante
+```powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" device monitor
+```
 
-## Modos de UI
+## Interaccion del dispositivo
 
-### Pet
-
-Es el modo principal. Muestra los ojos y aplica:
-
-- estado emocional por horario
-- seguimiento IMU
-- micro movimiento cuando la IMU no domina la mirada
-- `motion alert` visual ante movimiento brusco
-
-### Clock
-
-Muestra:
-
-- hora `HH:MM:SS`
-- fecha `dd-mm-yyyy`
-- bateria estimada como `BAT xx% x.xxV`
-
-La medicion de bateria se toma desde `GPIO1` con divisor `200k / 100k`, siguiendo la referencia de Waveshare para la `ESP32-S3-Touch-LCD-1.69`. La escala actual fue calibrada en hardware con factor `3.16`.
-
-## Interaccion por boton
-
-Con el boton `PWR`:
+### Boton `PWR`
 
 - `1 click`: alterna entre `Pet` y `Clock`
 - `2 clicks`: abre `SET CLOCK`
 - `hold largo`: guarda hora en el menu o apaga la placa fuera del menu
 
-## Menu de reloj
+### Menu `SET CLOCK`
 
-El menu `SET CLOCK` permite editar:
+Permite editar:
 
 - dia
 - mes
@@ -105,48 +73,85 @@ El menu `SET CLOCK` permite editar:
 - hora
 - minuto
 
-Comportamiento:
+Controles:
 
-- inclinacion lateral: edita el campo activo
+- inclinacion lateral: modifica el campo activo
 - click corto: avanza al siguiente campo
 - hold largo: guarda en `RTC` y en `Preferences`
 
-Cuando no hay hora valida en `RTC`, el menu parte desde:
+Si el `RTC` no tiene una hora valida, el menu inicializa desde:
 
-1. hora actual del `RTC`, si existe
-2. ultimo backup guardado en flash
-3. valor por defecto `2026-01-01 08:40:00`
+1. hora leida desde `RTC`, si existe
+2. ultimo backup persistido en flash
+3. `2026-01-01 08:40:00`
 
-## Comportamiento diario
+## Comportamiento de la pet
 
-La mascota cambia segun la hora:
+### Fases horarias
 
-- `07:00-09:00`: sleepy
-- `09:00-12:30`: active
-- `12:30-14:00`: lunch rest
-- `14:00-14:30`: post lunch nap
-- `14:30-18:00`: work to angry
-- `18:00-22:00`: relax
-- `22:00-07:00`: night sleep
+- `07:00-09:00`: `SleepyAM`
+- `09:00-12:30`: `ActiveAM`
+- `12:30-14:00`: `LunchRest`
+- `14:00-14:30`: `PostLunchNap`
+- `14:30-18:00`: `WorkToAngry`
+- `18:00-22:00`: `RelaxPM`
+- `22:00-07:00`: `NightSleep`
 
-En `NightSleep`, si el `RTC` es valido y no estas en el menu de reloj, entra en deep sleep y programa wake para las `08:40`.
+### Gestos y reacciones IMU
 
-## Gestos IMU
+La IMU se usa para dos capas:
 
-La IMU se usa para dos cosas:
+- movimiento continuo: mirada, desplazamiento del ojo y leve inclinacion del cuerpo
+- reacciones temporales: overrides de mood y overlays
 
-- movimiento continuo de ojos y leve `body lean`
-- gestos temporales
+Estados y reacciones actuales:
 
-Gestos implementados:
+- inclinacion sostenida hacia arriba: gesto `Sleepy`
+- inclinacion sostenida hacia abajo: gesto `Angry`
+- movimiento brusco medio: `Confused`
+- movimiento fuerte o sostenido cerca de `2 s`: `Dazed`
+- sacudida extrema: `Glitch`
 
-- inclinacion sostenida hacia arriba: `Sleepy`
-- inclinacion sostenida hacia abajo: `Angry`
-- shake fuerte: efecto `Glitch`
+Visualmente, la expresividad vive principalmente en:
 
-## Comandos seriales
+- deformacion de la forma del ojo
+- apertura y squint
+- posicion de pupilas
+- overlays contextuales como `Doze`, `Confused`, `Dizzy` y `Glitch`
 
-Disponibles desde `HELP`:
+## Bateria y energia
+
+La bateria se mide desde `GPIO1` usando el divisor de la variante Waveshare.
+
+Comportamiento energetico actual:
+
+- actualizacion periodica con filtro para estabilizar lectura
+- porcentaje lineal aproximado entre `3.30V` y `4.20V`
+- heuristica `usbLikely` cuando el voltaje es alto
+- deep sleep nocturno con wake a las `08:40`
+- deep sleep defensivo si la bateria baja a `30%` y no parece estar en USB
+
+Si el `RTC` es valido, el sleep por bateria baja intenta despertar en la siguiente ventana normal.
+Si el `RTC` no es valido, usa un fallback de `30 minutos`.
+
+## Arquitectura del firmware
+
+El proyecto ya no depende de un `main.cpp` gigante. La logica se separa en modulos:
+
+- [`src/main.cpp`](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/src/main.cpp): orquestacion del loop
+- [`lib/PetUI`](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/lib/PetUI): render visual
+- [`lib/ImuMotion`](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/lib/ImuMotion): lectura IMU, tilt, shake y estados derivados
+- [`lib/PetBehavior`](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/lib/PetBehavior): composicion de intencion visual
+- [`lib/ClockLogic`](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/lib/ClockLogic): fechas, fases, menu y wake scheduling
+- [`lib/BatteryMonitor`](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/lib/BatteryMonitor): medicion y filtrado de bateria
+- [`lib/PowerButton`](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/lib/PowerButton): clicks, doble click y hold
+- [`lib/FirmwareTypes`](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/lib/FirmwareTypes): tipos compartidos
+
+Hay una explicacion mas detallada en [docs/ARCHITECTURE.md](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/docs/ARCHITECTURE.md).
+
+## Diagnostico por serial
+
+Comandos disponibles:
 
 ```text
 BAT?
@@ -155,56 +160,40 @@ RTC?
 SET_RTC YYYY-MM-DD HH:MM:SS
 ```
 
-Ejemplos:
+Ejemplo:
 
 ```text
-RTC?
-BAT?
-I2C?
 SET_RTC 2026-07-01 08:40:00
+BAT?
+RTC?
 ```
 
-## Build
+## Hardware validado
 
-Compilar:
+La variante documentada del proyecto se apoya en una `Waveshare ESP32-S3-Touch-LCD-1.69`, pero la UI activa de este repo hoy corre en un `OLED I2C` externo.
 
-```powershell
-& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run
-```
+Perifericos confirmados por codigo o por escaneo:
 
-Flashear:
+- `0x3C`: OLED `SH1106/SSD1306`
+- `0x51`: `RTC PCF85063`
+- `0x6B`: `IMU QMI8658`
+- `GPIO1`: medicion de bateria
+- `GPIO40`: boton `PWR`
+- `GPIO41`: `PWR_HOLD`
 
-```powershell
-& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -t upload
-```
-
-Monitor serial:
-
-```powershell
-& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" device monitor
-```
-
-## Estructura del repo
-
-```text
-src/main.cpp          Orquestacion del firmware
-include/pinout.h      Pines y constantes de hardware
-lib/PetUI/            Render y estado visual
-lib/RtcClock/         Driver minimo del PCF85063
-lib/ImuQmi8658/       Wrapper de IMU
-lib/Melodies/         Audio no bloqueante, hoy deshabilitado por pinout
-ROADMAP.md            Hoja de ruta del proyecto
-```
+Mas detalle en [docs/HARDWARE.md](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/docs/HARDWARE.md).
 
 ## Limitaciones conocidas
 
-- El porcentaje de bateria es una aproximacion lineal entre `3.30V` y `4.20V`.
-- El valor `usb_likely` se infiere por voltaje alto, no por deteccion dedicada de carga.
-- El buzzer no esta activo en esta variante de hardware.
-- El touch no participa en la UI actual.
-- No hay suite de tests.
+- el porcentaje de bateria sigue siendo una aproximacion lineal
+- `usbLikely` es una heuristica, no una deteccion dedicada de carga
+- el buzzer sigue deshabilitado en esta variante de hardware
+- el touch no participa en la UI
+- no hay tests automatizados
+- la logica de wake sigue fija a `08:40`
 
-## Referencias relacionadas
+## Documentacion relacionada
 
-- Hoja de ruta: [ROADMAP.md](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/ROADMAP.md)
-- Hardware y diagnostico: [docs/HARDWARE.md](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/docs/HARDWARE.md)
+- [docs/ARCHITECTURE.md](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/docs/ARCHITECTURE.md)
+- [docs/HARDWARE.md](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/docs/HARDWARE.md)
+- [ROADMAP.md](C:/Users/juan.cornejo/Documents/PlatformIO/Projects/gif/ROADMAP.md)
