@@ -38,9 +38,21 @@ static constexpr int BUZZ_CH = 0;
 static constexpr int BUZZ_RES = 8;
 static constexpr uint8_t LOW_BATTERY_SLEEP_PERCENT = 30;
 static constexpr uint32_t LOW_BATTERY_FALLBACK_SLEEP_SEC = 30u * 60u;
+// This hardware variant shares power with the external RTC and does not
+// reliably wake back up from ESP32 deep sleep. Keep the scheduler active,
+// but default to screen-off night idle instead of deep sleep.
+static constexpr bool ENABLE_DEEP_SLEEP = false;
+
+static bool displayPowerSave = false;
 
 static void powerHold(bool enable) {
   digitalWrite(PIN_PWR_HOLD, enable ? HIGH : LOW);
+}
+
+static void setDisplayPowerSave(bool enable) {
+  if (displayPowerSave == enable) return;
+  displayPowerSave = enable;
+  u8g2.setPowerSave(enable ? 1 : 0);
 }
 
 static void saveClockBackup(const DateTime& dt) {
@@ -209,10 +221,21 @@ static void enterDeepSleepForSeconds(uint32_t sleepSec, const char* reason) {
 }
 
 static void enterNightDeepSleep(const DateTime& dt) {
+  if (!ENABLE_DEEP_SLEEP) return;
   enterDeepSleepForSeconds(ClockLogic::secondsUntilNextWake(dt), "night schedule");
 }
 
 static void enterLowBatteryDeepSleep(bool hasTime, const DateTime& dt) {
+  if (!ENABLE_DEEP_SLEEP) {
+    Serial.println("Deep sleep disabled on this hardware variant. Powering off for low battery protection.");
+    Serial.flush();
+    Melodies::stop();
+    setDisplayPowerSave(true);
+    delay(120);
+    powerHold(false);
+    while (true) delay(1000);
+  }
+
   if (hasTime && rtc.valid()) {
     enterDeepSleepForSeconds(ClockLogic::secondsUntilNextWake(dt), "low battery until next wake");
     return;
@@ -296,6 +319,7 @@ void setup() {
   Melodies::play(Melodies::Tune::Boot);
 
   Serial.printf("RTC begin: %s\n", rtcOk ? "OK" : "FAIL");
+  Serial.printf("Deep sleep: %s\n", ENABLE_DEEP_SLEEP ? "enabled" : "disabled (night idle mode)");
   Serial.println("Type HELP for RTC serial commands");
   Serial.println("Pet boot OK");
 }
@@ -389,8 +413,14 @@ void loop() {
       phaseIntent = ClockLogic::phaseIntentFor(currentPhase, dt);
 
       if (!clockMenu.active && rtc.valid() && currentPhase == PetPhase::NightSleep) {
-        delay(120);
-        enterNightDeepSleep(dt);
+        if (ENABLE_DEEP_SLEEP) {
+          delay(120);
+          enterNightDeepSleep(dt);
+        } else {
+          setDisplayPowerSave(true);
+        }
+      } else {
+        setDisplayPowerSave(false);
       }
     }
   }
@@ -441,5 +471,5 @@ void loop() {
     clockView.active ? &clockView : nullptr
   );
 
-  delay(16);
+  delay((!ENABLE_DEEP_SLEEP && !clockMenu.active && rtc.valid() && currentPhase == PetPhase::NightSleep) ? 250 : 16);
 }

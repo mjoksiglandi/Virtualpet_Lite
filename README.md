@@ -22,7 +22,7 @@ El firmware actual ya implementa:
 - reaccion a inclinacion, sacudidas y movimiento sostenido usando `QMI8658`
 - menu local para ajustar fecha y hora sin recompilar
 - persistencia en `Preferences` para backup de hora y modo de UI
-- deep sleep nocturno con wake a las `08:40`
+- modo nocturno con pantalla apagada
 - deep sleep por bateria baja cuando cae a `30%`
 - medicion de bateria por `ADC` en `GPIO1`
 - diagnostico por serial para `BAT`, `I2C` y `RTC`
@@ -128,11 +128,12 @@ Comportamiento energetico actual:
 - actualizacion periodica con filtro para estabilizar lectura
 - porcentaje lineal aproximado entre `3.30V` y `4.20V`
 - heuristica `usbLikely` cuando el voltaje es alto
-- deep sleep nocturno con wake a las `08:40`
+- pantalla apagada durante la noche
 - deep sleep defensivo si la bateria baja a `30%` y no parece estar en USB
 
-Si el `RTC` es valido, el sleep por bateria baja intenta despertar en la siguiente ventana normal.
-Si el `RTC` no es valido, usa un fallback de `30 minutos`.
+En esta variante el `deep sleep` del `ESP32-S3` queda deshabilitado por defecto porque el hardware actual no vuelve de forma confiable y el `RTC` externo no esta cableado como fuente de wake.
+Durante `NightSleep` el firmware deja la pantalla en ahorro de energia y sigue corriendo con el reloj externo.
+Si la bateria cae a `30%`, el equipo se apaga para proteger la celda.
 
 ## Arquitectura del firmware
 
@@ -190,7 +191,7 @@ Mas detalle en [docs/HARDWARE.md](C:/Users/juan.cornejo/Documents/PlatformIO/Pro
 - el buzzer sigue deshabilitado en esta variante de hardware
 - el touch no participa en la UI
 - no hay tests automatizados
-- la logica de wake sigue fija a `08:40`
+- para recuperar wake automatico real hace falta mantener operativo el dominio RTC del `ESP32-S3` o cablear la salida `INT` del `PCF85063`
 
 ## Documentacion relacionada
 

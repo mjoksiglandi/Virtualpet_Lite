@@ -54,7 +54,14 @@ Uso actual:
 
 - entrega hora local al firmware
 - define fases horarias de la pet
-- permite deep sleep nocturno con wake programado
+- mantiene el horario mientras la bateria principal siga alimentando la placa
+
+Importante en esta variante:
+
+- el `PCF85063` no tiene bateria de respaldo dedicada
+- el pin de alarma `INT` del `RTC` no esta siendo usado como fuente de wake del `ESP32-S3`
+- por eso el firmware deja `deep sleep` deshabilitado por defecto y usa pantalla apagada durante la noche
+- para volver al wake automatico real hace falta mantener operativo el dominio RTC del `ESP32-S3` o cablear `INT` hacia un pin de wake/power
 
 Si el `RTC` no es valido:
 
