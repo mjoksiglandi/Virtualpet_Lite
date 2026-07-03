@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <math.h>
 #include <Preferences.h>
 #include <Wire.h>
 #include <U8g2lib.h>
@@ -38,12 +39,24 @@ static constexpr int BUZZ_CH = 0;
 static constexpr int BUZZ_RES = 8;
 static constexpr uint8_t LOW_BATTERY_SLEEP_PERCENT = 30;
 static constexpr uint32_t LOW_BATTERY_FALLBACK_SLEEP_SEC = 30u * 60u;
+static constexpr uint32_t DISPLAY_IDLE_TIMEOUT_MS = 5u * 60u * 1000u;
 // This hardware variant shares power with the external RTC and does not
 // reliably wake back up from ESP32 deep sleep. Keep the scheduler active,
 // but default to screen-off night idle instead of deep sleep.
 static constexpr bool ENABLE_DEEP_SLEEP = false;
 
 static bool displayPowerSave = false;
+
+static bool sampleHasActivity(const ImuSample& sample) {
+  const float accelMag = sqrtf(
+    sample.ax * sample.ax +
+    sample.ay * sample.ay +
+    sample.az * sample.az
+  );
+  const float accelDynamic = fabsf(accelMag - 1.0f);
+  const float gyroActivity = fabsf(sample.gx) + fabsf(sample.gy) + fabsf(sample.gz);
+  return accelDynamic > 0.08f || gyroActivity > 32.0f;
+}
 
 static void powerHold(bool enable) {
   digitalWrite(PIN_PWR_HOLD, enable ? HIGH : LOW);
@@ -333,10 +346,13 @@ void loop() {
   static ClockMenuState clockMenu;
   static MoodIntent phaseIntent;
   static VisualState visual;
+  static uint32_t lastActivityAt = 0;
 
   const uint32_t now = millis();
+  if (lastActivityAt == 0) lastActivityAt = now;
   batteryMonitor.update(now);
   const BatterySnapshot& battery = batteryMonitor.snapshot();
+  bool wakeDisplay = false;
 
   while (Serial.available() > 0) {
     const char c = (char)Serial.read();
@@ -351,12 +367,15 @@ void loop() {
 
   switch (powerButton.update(now, digitalRead(PIN_BTN_PWR) == LOW, clockMenu.active)) {
     case PowerAction::Shutdown:
+      lastActivityAt = now;
       Serial.println("Power button long press: shutting down");
       Melodies::play(Melodies::Tune::PhaseAlert);
       delay(120);
       powerHold(false);
       break;
     case PowerAction::ClockMenuSave:
+      lastActivityAt = now;
+      wakeDisplay = true;
       clockMenu.draft.second = 0;
       ClockLogic::clampDateTime(clockMenu.draft);
       if (rtc.set(clockMenu.draft)) {
@@ -375,10 +394,14 @@ void loop() {
       }
       break;
     case PowerAction::ClockMenuNextField:
+      lastActivityAt = now;
+      wakeDisplay = true;
       clockMenu.fieldIndex = (uint8_t)((clockMenu.fieldIndex + 1) % 5);
       clockMenu.lastInteractionMs = now;
       break;
     case PowerAction::OpenClockMenu: {
+      lastActivityAt = now;
+      wakeDisplay = true;
       const DateTime seed = hasTime ? dt : (hasSavedClockBackup ? savedClockBackup : DateTime{2026, 1, 1, 8, 40, 0});
       ClockLogic::openClockMenu(clockMenu, hasTime && rtc.valid(), hasSavedClockBackup, seed, savedClockBackup);
       Melodies::play(Melodies::Tune::PhaseDouble);
@@ -386,6 +409,8 @@ void loop() {
       break;
     }
     case PowerAction::ToggleUiMode:
+      lastActivityAt = now;
+      wakeDisplay = true;
       saveUiMode(uiMode == UiMode::Pet ? UiMode::Clock : UiMode::Pet);
       Melodies::play(Melodies::Tune::PhaseTick);
       Serial.printf("UI mode: %s\n", uiMode == UiMode::Clock ? "clock" : "pet");
@@ -431,6 +456,10 @@ void loop() {
 
   ImuSample imuSample{};
   if (imu.readSample(imuSample)) {
+    if (sampleHasActivity(imuSample)) {
+      lastActivityAt = now;
+      wakeDisplay = true;
+    }
     imuMotion.update(now, imuSample, clockMenu.active, clockMenu, visual, gestureOverride);
   } else {
     imuMotion.updateNoSample(visual);
@@ -465,11 +494,23 @@ void loop() {
     else clockView.value = DateTime{2026, 1, 1, 8, 40, 0};
   }
 
-  pet.render(
-    hasTime ? &dt : nullptr,
-    clockMenu.active ? &menuView : nullptr,
-    clockView.active ? &clockView : nullptr
-  );
+  const bool nightDisplaySleep = !ENABLE_DEEP_SLEEP && !clockMenu.active && rtc.valid() && currentPhase == PetPhase::NightSleep;
+  const bool idleDisplaySleep = !clockMenu.active && (now - lastActivityAt) >= DISPLAY_IDLE_TIMEOUT_MS;
+  const bool shouldSleepDisplay = nightDisplaySleep || idleDisplaySleep;
 
-  delay((!ENABLE_DEEP_SLEEP && !clockMenu.active && rtc.valid() && currentPhase == PetPhase::NightSleep) ? 250 : 16);
+  if (wakeDisplay && !nightDisplaySleep) {
+    setDisplayPowerSave(false);
+  } else {
+    setDisplayPowerSave(shouldSleepDisplay);
+  }
+
+  if (!displayPowerSave) {
+    pet.render(
+      hasTime ? &dt : nullptr,
+      clockMenu.active ? &menuView : nullptr,
+      clockView.active ? &clockView : nullptr
+    );
+  }
+
+  delay(shouldSleepDisplay ? 250 : 16);
 }

@@ -369,10 +369,10 @@ void PetUI::drawClockMenu(int w, int h, const ClockMenuView& menu) {
 }
 
 void PetUI::drawClockFace(int w, int h, const ClockFaceView& clock) {
-  char timeLine[16];
+  char timeLine[8];
   char dateLine[20];
   char batteryLine[24];
-  snprintf(timeLine, sizeof(timeLine), "%02u:%02u:%02u", clock.value.hour, clock.value.minute, clock.value.second);
+  snprintf(timeLine, sizeof(timeLine), "%02u:%02u", clock.value.hour, clock.value.minute);
   snprintf(dateLine, sizeof(dateLine), "%02u-%02u-%04u", clock.value.day, clock.value.month, clock.value.year);
 
   _d.setDrawColor(1);
