@@ -42,7 +42,7 @@ bool ImuMotion::update(
   visual.bodyLeanX = (int8_t)curLean;
 
   const float motionDelta = fabsf(_rollF - _lastRollF) + fabsf(_pitchF - _lastPitchF);
-  if (motionDelta > 5.5f) _motionAlertUntil = now + 220;
+  if (motionDelta > 9.0f) _motionAlertUntil = now + 140;
 
   const float accelMag = sqrtf(
     sample.ax * sample.ax +
@@ -51,7 +51,7 @@ bool ImuMotion::update(
   );
   const float accelDynamic = fabsf(accelMag - 1.0f);
   const float gyroShake = fabsf(sample.gx) + fabsf(sample.gy) + fabsf(sample.gz);
-  const bool heavyMotionNow = (accelDynamic > 0.24f && gyroShake > 105.0f) || gyroShake > 190.0f;
+  const bool heavyMotionNow = (accelDynamic > 0.32f && gyroShake > 145.0f) || gyroShake > 240.0f;
 
   if (heavyMotionNow) {
     if (_heavyMotionSince == 0) _heavyMotionSince = now;
@@ -59,32 +59,32 @@ bool ImuMotion::update(
     _heavyMotionSince = 0;
   }
 
-  if (accelDynamic < 0.18f && gyroShake < 90.0f) _shakeArmed = true;
+  if (accelDynamic < 0.14f && gyroShake < 60.0f) _shakeArmed = true;
 
-  const bool dazedShake = (accelDynamic > 0.22f && gyroShake > 95.0f) || gyroShake > 155.0f;
-  const bool glitchShake = (accelDynamic > 0.48f && gyroShake > 230.0f) || gyroShake > 380.0f;
-  const bool sustainedDazed = _heavyMotionSince != 0 && (now - _heavyMotionSince) >= 700;
+  const bool dazedShake = (accelDynamic > 0.34f && gyroShake > 160.0f) || gyroShake > 245.0f;
+  const bool glitchShake = (accelDynamic > 0.62f && gyroShake > 320.0f) || gyroShake > 520.0f;
+  const bool sustainedDazed = _heavyMotionSince != 0 && (now - _heavyMotionSince) >= 1100;
 
-  if ((dazedShake || sustainedDazed) && now >= _shakeCooldownUntil) {
+  if (_shakeArmed && (dazedShake || sustainedDazed) && now >= _shakeCooldownUntil) {
     _shakeArmed = false;
-    _shakeCooldownUntil = now + (sustainedDazed ? 2200 : 1600);
+    _shakeCooldownUntil = now + (sustainedDazed ? 2600 : 1800);
     gestureOverride.active = true;
     if (glitchShake) {
       gestureOverride.mood = Mood::Glitch;
       gestureOverride.brow = 95;
-      gestureOverride.squint = 6;
+      gestureOverride.squint = 5;
       gestureOverride.overlay = OverlayFx::Glitch;
       gestureOverride.overlayStrength = 100;
-      gestureOverride.untilMs = now + 1200;
-      _motionAlertUntil = now + 950;
+      gestureOverride.untilMs = now + 900;
+      _motionAlertUntil = now + 700;
     } else {
       gestureOverride.mood = Mood::Dazed;
       gestureOverride.brow = 38;
-      gestureOverride.squint = 8;
+      gestureOverride.squint = 6;
       gestureOverride.overlay = OverlayFx::Dizzy;
-      gestureOverride.overlayStrength = 100;
-      gestureOverride.untilMs = now + (sustainedDazed ? 4800 : 3600);
-      _motionAlertUntil = now + 2400;
+      gestureOverride.overlayStrength = 82;
+      gestureOverride.untilMs = now + (sustainedDazed ? 3200 : 2200);
+      _motionAlertUntil = now + 500;
     }
     _heavyMotionSince = 0;
   }

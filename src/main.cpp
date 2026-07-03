@@ -276,6 +276,7 @@ static void updateClockView(ClockFaceView& clockView, bool hasTime) {
   const BatterySnapshot& battery = batteryMonitor.snapshot();
   clockView.active = true;
   clockView.rtcValid = hasTime && rtc.valid();
+  clockView.usingBackupValue = !clockView.rtcValid && hasSavedClockBackup;
   clockView.batteryVisible = battery.valid;
   clockView.batteryUsb = battery.usbLikely;
   clockView.batteryPercent = battery.percent;
@@ -483,6 +484,7 @@ void loop() {
   if (clockMenu.active) {
     menuView.active = true;
     menuView.rtcValid = clockMenu.rtcValidOnEntry;
+    menuView.usingBackupSeed = clockMenu.usingBackupSeed;
     menuView.dirty = clockMenu.dirty;
     menuView.fieldIndex = clockMenu.fieldIndex;
     menuView.value = clockMenu.draft;

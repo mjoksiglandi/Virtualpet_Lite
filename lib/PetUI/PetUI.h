@@ -45,6 +45,7 @@ struct PetState {
 struct ClockMenuView {
   bool active = false;
   bool rtcValid = false;
+  bool usingBackupSeed = false;
   bool dirty = false;
   uint8_t fieldIndex = 0;
   DateTime value{2026, 1, 1, 8, 0, 0};
@@ -53,6 +54,7 @@ struct ClockMenuView {
 struct ClockFaceView {
   bool active = false;
   bool rtcValid = false;
+  bool usingBackupValue = false;
   bool batteryVisible = false;
   bool batteryUsb = false;
   uint8_t batteryPercent = 0;
@@ -91,6 +93,15 @@ private:
   int8_t _idleTargetLookX = 0;
   int8_t _idleTargetLookY = 0;
   uint8_t _microSquint = 0;
+  int8_t _microBiasLX = 0;
+  int8_t _microBiasRX = 0;
+  int8_t _microBiasLY = 0;
+  int8_t _microBiasRY = 0;
+  uint8_t _microLeftSquint = 0;
+  uint8_t _microRightSquint = 0;
+  uint8_t _blinkLeft = 100;
+  uint8_t _blinkRight = 100;
+  bool _doubleBlinkQueued = false;
 
   void drawEyes(int w, int h);
   void drawGlitchOverlay(int w, int h);
