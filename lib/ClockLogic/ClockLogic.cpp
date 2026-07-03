@@ -76,6 +76,65 @@ void openClockMenu(ClockMenuState& menu, bool rtcHasTime, bool hasSavedClockBack
   clampDateTime(menu.draft);
 }
 
+uint8_t dayOfWeek(const DateTime& dt) {
+  static const uint8_t OFFSETS[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+  uint16_t year = dt.year;
+  if (dt.month < 3) year--;
+  return (uint8_t)((year + year / 4u - year / 100u + year / 400u + OFFSETS[dt.month - 1] + dt.day) % 7u);
+}
+
+bool isWorkdayExitTime(const DateTime& dt) {
+  const uint8_t dow = dayOfWeek(dt);
+  if (dow >= 1 && dow <= 4) {
+    return dt.hour == 18 && dt.minute == 0;
+  }
+  if (dow == 5) {
+    return dt.hour == 15 && dt.minute == 0;
+  }
+  return false;
+}
+
+bool nextWorkdayExit(const DateTime& dt, DateTime& out) {
+  DateTime candidate = dt;
+  candidate.second = 0;
+
+  for (uint8_t i = 0; i < 8; ++i) {
+    const uint8_t dow = dayOfWeek(candidate);
+    bool isWorkday = false;
+    uint8_t targetHour = 0;
+
+    if (dow >= 1 && dow <= 4) {
+      isWorkday = true;
+      targetHour = 18;
+    } else if (dow == 5) {
+      isWorkday = true;
+      targetHour = 15;
+    }
+
+    if (isWorkday) {
+      candidate.hour = targetHour;
+      candidate.minute = 0;
+      candidate.second = 0;
+
+      const bool sameDayFuture =
+        i == 0 &&
+        (dt.hour < targetHour || (dt.hour == targetHour && dt.minute == 0 && dt.second == 0));
+
+      if (i > 0 || sameDayFuture) {
+        out = candidate;
+        return true;
+      }
+    }
+
+    candidate.hour = 0;
+    candidate.minute = 0;
+    candidate.second = 0;
+    advanceOneDay(candidate);
+  }
+
+  return false;
+}
+
 PetPhase phaseForTime(const DateTime& dt) {
   const int m = dt.hour * 60 + dt.minute;
   if (m >= 7 * 60 && m < 9 * 60) return PetPhase::SleepyAM;

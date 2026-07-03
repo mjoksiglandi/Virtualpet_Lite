@@ -12,6 +12,11 @@ static const char* monthShort(uint8_t month) {
   return MONTHS[month - 1];
 }
 
+static const char* weekdayShort(uint8_t dayOfWeek) {
+  static const char* WEEKDAYS[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+  return WEEKDAYS[dayOfWeek < 7 ? dayOfWeek : 0];
+}
+
 static const char* menuFieldLabel(uint8_t fieldIndex) {
   static const char* LABELS[] = {"DAY", "MONTH", "YEAR", "HOUR", "MIN"};
   return LABELS[fieldIndex < 5 ? fieldIndex : 0];
@@ -344,7 +349,7 @@ void PetUI::tickMoodAuto() {
   }
 }
 
-void PetUI::render(const DateTime*, const ClockMenuView* menuNullable, const ClockFaceView* clockNullable) {
+void PetUI::render(const DateTime*, const ClockMenuView* menuNullable, const ClockFaceView* clockNullable, const StatusView* statusNullable) {
   _d.clearBuffer();
   if (menuNullable && menuNullable->active) {
     drawClockMenu(_d.getDisplayWidth(), _d.getDisplayHeight(), *menuNullable);
@@ -353,6 +358,11 @@ void PetUI::render(const DateTime*, const ClockMenuView* menuNullable, const Clo
   }
   if (clockNullable && clockNullable->active) {
     drawClockFace(_d.getDisplayWidth(), _d.getDisplayHeight(), *clockNullable);
+    _d.sendBuffer();
+    return;
+  }
+  if (statusNullable && statusNullable->active) {
+    drawStatusFace(_d.getDisplayWidth(), _d.getDisplayHeight(), *statusNullable);
     _d.sendBuffer();
     return;
   }
@@ -555,4 +565,50 @@ void PetUI::drawClockFace(int w, int h, const ClockFaceView& clock) {
     const int hintW = _d.getStrWidth(hint);
     _d.drawStr((w - hintW) / 2, 63, hint);
   }
+}
+
+void PetUI::drawStatusFace(int w, int h, const StatusView& status) {
+  char timeLine[8];
+  char batteryLine[20];
+  snprintf(timeLine, sizeof(timeLine), "%02u:%02u", status.value.hour, status.value.minute);
+  snprintf(batteryLine, sizeof(batteryLine), "%3u%% %4umV", status.batteryPercent, status.batteryMv);
+
+  _d.setDrawColor(1);
+  drawBadge(_d, 2, 9, "STATUS", false);
+  drawBadge(_d, 44, 9, status.rtcValid ? "RTC OK" : (status.usingBackupValue ? "BACKUP" : "RTC EMPTY"), status.rtcValid);
+
+  if (status.batteryVisible) {
+    drawBatteryIcon(_d, w - 20, 2, status.batteryPercent, status.batteryUsb);
+  }
+
+  _d.setFont(u8g2_font_logisoso18_tf);
+  const int timeW = _d.getStrWidth(timeLine);
+  _d.drawStr((w - timeW) / 2, 30, timeLine);
+
+  _d.setFont(u8g2_font_6x10_tf);
+  const int batteryW = _d.getStrWidth(batteryLine);
+  _d.drawStr((w - batteryW) / 2, 42, batteryLine);
+
+  char imuLine[20];
+  snprintf(imuLine, sizeof(imuLine), "IMU %s%s", status.imuReady ? "OK" : "FAIL", status.batteryUsb ? "  USB" : "");
+  _d.setFont(u8g2_font_5x8_tf);
+  const int imuW = _d.getStrWidth(imuLine);
+  _d.drawStr((w - imuW) / 2, 51, imuLine);
+
+  char exitLine[24];
+  if (status.nextExitActive) {
+    snprintf(
+      exitLine,
+      sizeof(exitLine),
+      "%s %s %02u:%02u",
+      status.nextExitToday ? "OUT" : "NEXT",
+      weekdayShort(status.nextExitWeekday),
+      status.nextExitHour,
+      status.nextExitMinute
+    );
+  } else {
+    snprintf(exitLine, sizeof(exitLine), "NO WORK EXIT");
+  }
+  const int exitW = _d.getStrWidth(exitLine);
+  _d.drawStr((w - exitW) / 2, 62, exitLine);
 }

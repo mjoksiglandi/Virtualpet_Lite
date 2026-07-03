@@ -62,6 +62,23 @@ struct ClockFaceView {
   DateTime value{2026, 1, 1, 8, 0, 0};
 };
 
+struct StatusView {
+  bool active = false;
+  bool rtcValid = false;
+  bool usingBackupValue = false;
+  bool batteryVisible = false;
+  bool batteryUsb = false;
+  bool imuReady = false;
+  uint8_t batteryPercent = 0;
+  uint16_t batteryMv = 0;
+  bool nextExitActive = false;
+  bool nextExitToday = false;
+  uint8_t nextExitWeekday = 0;
+  uint8_t nextExitHour = 0;
+  uint8_t nextExitMinute = 0;
+  DateTime value{2026, 1, 1, 8, 0, 0};
+};
+
 class PetUI {
 public:
   explicit PetUI(U8G2& d);
@@ -69,7 +86,8 @@ public:
   void render(
     const DateTime* dtNullable,
     const ClockMenuView* menuNullable = nullptr,
-    const ClockFaceView* clockNullable = nullptr
+    const ClockFaceView* clockNullable = nullptr,
+    const StatusView* statusNullable = nullptr
   );
 
   void tickBlink();
@@ -108,4 +126,5 @@ private:
   void drawAccentOverlay(int w, int h);
   void drawClockMenu(int w, int h, const ClockMenuView& menu);
   void drawClockFace(int w, int h, const ClockFaceView& clock);
+  void drawStatusFace(int w, int h, const StatusView& status);
 };

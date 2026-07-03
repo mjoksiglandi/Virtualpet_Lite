@@ -6,7 +6,8 @@
 
 enum class UiMode : uint8_t {
   Pet = 0,
-  Clock = 1
+  Clock = 1,
+  Status = 2
 };
 
 enum class PetPhase : uint8_t {
@@ -19,6 +20,29 @@ enum class PetPhase : uint8_t {
   RelaxPM,
   NightSleep
 };
+
+enum class OverlayState : uint8_t {
+  None = 0,
+  Charging = 1 << 0,
+  LowBattery = 1 << 1,
+  RtcError = 1 << 2,
+  ImuError = 1 << 3,
+  Interaction = 1 << 4,
+  Focus = 1 << 5
+};
+
+inline OverlayState operator|(OverlayState a, OverlayState b) {
+  return (OverlayState)((uint8_t)a | (uint8_t)b);
+}
+
+inline OverlayState& operator|=(OverlayState& a, OverlayState b) {
+  a = a | b;
+  return a;
+}
+
+inline bool hasOverlay(OverlayState value, OverlayState flag) {
+  return (((uint8_t)value) & ((uint8_t)flag)) != 0;
+}
 
 struct BatterySnapshot {
   bool valid = false;

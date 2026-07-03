@@ -27,12 +27,14 @@ static Preferences prefs;
 static BatteryMonitor batteryMonitor(PIN_BAT_ADC, 3.16f);
 static PowerButton powerButton(1500, 350, 450);
 static ImuMotion imuMotion(0.38f, 180);
+static bool imuReady = false;
+static bool rtcReady = false;
 
 static bool hasSavedClockBackup = false;
 static DateTime savedClockBackup{2026, 1, 1, 8, 40, 0};
 static UiMode uiMode = UiMode::Pet;
 static PetPhase currentPhase = PetPhase::Unknown;
-static uint32_t lastSchoolChimeKey = 0;
+static uint32_t lastWorkExitChimeKey = 0;
 
 static constexpr int BUZZER = PIN_BUZZER;
 static constexpr int BUZZ_CH = 0;
@@ -40,12 +42,59 @@ static constexpr int BUZZ_RES = 8;
 static constexpr uint8_t LOW_BATTERY_SLEEP_PERCENT = 30;
 static constexpr uint32_t LOW_BATTERY_FALLBACK_SLEEP_SEC = 30u * 60u;
 static constexpr uint32_t DISPLAY_IDLE_TIMEOUT_MS = 5u * 60u * 1000u;
+static constexpr uint32_t INTERACTION_OVERLAY_MS = 4500u;
+static constexpr uint32_t FOCUS_OVERLAY_AFTER_MS = 2u * 60u * 1000u;
 // This hardware variant shares power with the external RTC and does not
 // reliably wake back up from ESP32 deep sleep. Keep the scheduler active,
 // but default to screen-off night idle instead of deep sleep.
 static constexpr bool ENABLE_DEEP_SLEEP = false;
 
 static bool displayPowerSave = false;
+
+static OverlayState resolveOverlayState(
+  const BatterySnapshot& battery,
+  bool rtcOnline,
+  bool currentRtcValid,
+  bool imuOnline,
+  bool clockMenuActive,
+  UiMode uiMode,
+  uint32_t now,
+  uint32_t lastActivityAt,
+  uint32_t lastImuActivityAt
+) {
+  OverlayState overlays = OverlayState::None;
+
+  if (battery.valid && battery.usbLikely) {
+    overlays |= OverlayState::Charging;
+  }
+
+  if (battery.valid && !battery.usbLikely && battery.percent <= LOW_BATTERY_SLEEP_PERCENT) {
+    overlays |= OverlayState::LowBattery;
+  }
+
+  if (!rtcOnline || !currentRtcValid) {
+    overlays |= OverlayState::RtcError;
+  }
+
+  if (!imuOnline) {
+    overlays |= OverlayState::ImuError;
+  }
+
+  if (lastImuActivityAt != 0 && (now - lastImuActivityAt) <= INTERACTION_OVERLAY_MS) {
+    overlays |= OverlayState::Interaction;
+  }
+
+  const bool eligibleForFocus =
+    !clockMenuActive &&
+    uiMode == UiMode::Pet &&
+    lastActivityAt != 0 &&
+    (now - lastActivityAt) >= FOCUS_OVERLAY_AFTER_MS;
+  if (eligibleForFocus) {
+    overlays |= OverlayState::Focus;
+  }
+
+  return overlays;
+}
 
 static bool sampleHasActivity(const ImuSample& sample) {
   const float accelMag = sqrtf(
@@ -86,8 +135,8 @@ static void saveUiMode(UiMode mode) {
 }
 
 static void playPhaseCue(PetPhase ph) {
-  if (ph == PetPhase::NightSleep) Melodies::play(Melodies::Tune::PhaseAlert);
-  else if (ph == PetPhase::WorkToAngry) Melodies::play(Melodies::Tune::PhaseDouble);
+  if (ph == PetPhase::NightSleep) return;
+  if (ph == PetPhase::WorkToAngry) Melodies::play(Melodies::Tune::PhaseDouble);
   else Melodies::play(Melodies::Tune::PhaseTick);
 }
 
@@ -261,13 +310,19 @@ static void applyPhaseFromClock(const DateTime& dt) {
   const PetPhase ph = ClockLogic::phaseForTime(dt);
   if (ph != currentPhase) {
     currentPhase = ph;
-    const uint32_t dayKey = (uint32_t)(dt.year % 100) * 512u + (uint32_t)dt.month * 32u + (uint32_t)dt.day;
-    if (ph == PetPhase::RelaxPM && dt.hour == 18 && dt.minute == 0 && lastSchoolChimeKey != dayKey) {
-      lastSchoolChimeKey = dayKey;
+    playPhaseCue(ph);
+  }
+
+  if (ClockLogic::isWorkdayExitTime(dt)) {
+    const uint32_t minuteKey =
+      ((uint32_t)(dt.year % 100u) << 20) |
+      ((uint32_t)dt.month << 16) |
+      ((uint32_t)dt.day << 11) |
+      ((uint32_t)dt.hour << 6) |
+      (uint32_t)dt.minute;
+    if (lastWorkExitChimeKey != minuteKey) {
+      lastWorkExitChimeKey = minuteKey;
       Melodies::play(Melodies::Tune::SchoolChime18);
-    }
-    if (!(ph == PetPhase::RelaxPM && dt.hour == 18 && dt.minute == 0)) {
-      playPhaseCue(ph);
     }
   }
 }
@@ -281,6 +336,31 @@ static void updateClockView(ClockFaceView& clockView, bool hasTime) {
   clockView.batteryUsb = battery.usbLikely;
   clockView.batteryPercent = battery.percent;
   clockView.batteryMv = battery.mv;
+}
+
+static void updateStatusView(StatusView& statusView, bool hasTime, const DateTime& current) {
+  const BatterySnapshot& battery = batteryMonitor.snapshot();
+  statusView.active = true;
+  statusView.rtcValid = hasTime && rtc.valid();
+  statusView.usingBackupValue = !statusView.rtcValid && hasSavedClockBackup;
+  statusView.batteryVisible = battery.valid;
+  statusView.batteryUsb = battery.usbLikely;
+  statusView.imuReady = imuReady;
+  statusView.batteryPercent = battery.percent;
+  statusView.batteryMv = battery.mv;
+  statusView.value = current;
+
+  DateTime nextExit{};
+  statusView.nextExitActive = ClockLogic::nextWorkdayExit(current, nextExit);
+  if (statusView.nextExitActive) {
+    statusView.nextExitToday =
+      nextExit.year == current.year &&
+      nextExit.month == current.month &&
+      nextExit.day == current.day;
+    statusView.nextExitWeekday = ClockLogic::dayOfWeek(nextExit);
+    statusView.nextExitHour = nextExit.hour;
+    statusView.nextExitMinute = nextExit.minute;
+  }
 }
 
 void setup() {
@@ -301,7 +381,7 @@ void setup() {
   batteryMonitor.begin();
   Melodies::begin(BUZZER, BUZZ_CH, BUZZ_RES);
 
-  const bool rtcOk = rtc.begin();
+  rtcReady = rtc.begin();
   scanI2cBus();
   prefs.begin("virtualpet", false);
   hasSavedClockBackup = prefs.getBool("has_time", false);
@@ -316,9 +396,10 @@ void setup() {
   }
 
   const uint8_t storedUiMode = prefs.getUChar("ui_mode", (uint8_t)UiMode::Pet);
-  uiMode = (storedUiMode == (uint8_t)UiMode::Clock) ? UiMode::Clock : UiMode::Pet;
+  if (storedUiMode <= (uint8_t)UiMode::Status) uiMode = (UiMode)storedUiMode;
+  else uiMode = UiMode::Pet;
 
-  imu.begin();
+  imuReady = imu.begin();
 
   pet.state().mood = Mood::Neutral;
   pet.state().brow = 20;
@@ -332,7 +413,7 @@ void setup() {
 
   Melodies::play(Melodies::Tune::Boot);
 
-  Serial.printf("RTC begin: %s\n", rtcOk ? "OK" : "FAIL");
+  Serial.printf("RTC begin: %s\n", rtcReady ? "OK" : "FAIL");
   Serial.printf("Deep sleep: %s\n", ENABLE_DEEP_SLEEP ? "enabled" : "disabled (night idle mode)");
   Serial.println("Type HELP for RTC serial commands");
   Serial.println("Pet boot OK");
@@ -348,6 +429,8 @@ void loop() {
   static MoodIntent phaseIntent;
   static VisualState visual;
   static uint32_t lastActivityAt = 0;
+  static uint32_t lastImuActivityAt = 0;
+  static OverlayState overlays = OverlayState::None;
 
   const uint32_t now = millis();
   if (lastActivityAt == 0) lastActivityAt = now;
@@ -412,9 +495,18 @@ void loop() {
     case PowerAction::ToggleUiMode:
       lastActivityAt = now;
       wakeDisplay = true;
-      saveUiMode(uiMode == UiMode::Pet ? UiMode::Clock : UiMode::Pet);
+      saveUiMode(
+        uiMode == UiMode::Pet ? UiMode::Clock :
+        uiMode == UiMode::Clock ? UiMode::Status :
+        UiMode::Pet
+      );
       Melodies::play(Melodies::Tune::PhaseTick);
-      Serial.printf("UI mode: %s\n", uiMode == UiMode::Clock ? "clock" : "pet");
+      Serial.printf(
+        "UI mode: %s\n",
+        uiMode == UiMode::Pet ? "pet" :
+        uiMode == UiMode::Clock ? "clock" :
+        "status"
+      );
       break;
     case PowerAction::None:
     default:
@@ -459,6 +551,7 @@ void loop() {
   if (imu.readSample(imuSample)) {
     if (sampleHasActivity(imuSample)) {
       lastActivityAt = now;
+      lastImuActivityAt = now;
       wakeDisplay = true;
     }
     imuMotion.update(now, imuSample, clockMenu.active, clockMenu, visual, gestureOverride);
@@ -467,8 +560,20 @@ void loop() {
   }
 
   PetBehavior::applyVisualState(pet.state(), visual);
+  overlays = resolveOverlayState(
+    battery,
+    rtcReady,
+    hasTime && rtc.valid(),
+    imuReady,
+    clockMenu.active,
+    uiMode,
+    now,
+    lastActivityAt,
+    lastImuActivityAt
+  );
   const MoodIntent visualIntent = PetBehavior::composeVisualIntent(
     phaseIntent,
+    overlays,
     gestureOverride,
     clockMenu.active,
     visual.motionAlert
@@ -481,6 +586,7 @@ void loop() {
 
   ClockMenuView menuView{};
   ClockFaceView clockView{};
+  StatusView statusView{};
   if (clockMenu.active) {
     menuView.active = true;
     menuView.rtcValid = clockMenu.rtcValidOnEntry;
@@ -494,6 +600,12 @@ void loop() {
     if (hasTime) clockView.value = dt;
     else if (hasSavedClockBackup) clockView.value = savedClockBackup;
     else clockView.value = DateTime{2026, 1, 1, 8, 40, 0};
+  }
+  if (!clockMenu.active && uiMode == UiMode::Status) {
+    const DateTime statusTime =
+      hasTime ? dt :
+      (hasSavedClockBackup ? savedClockBackup : DateTime{2026, 1, 1, 8, 40, 0});
+    updateStatusView(statusView, hasTime, statusTime);
   }
 
   const bool nightDisplaySleep = !ENABLE_DEEP_SLEEP && !clockMenu.active && rtc.valid() && currentPhase == PetPhase::NightSleep;
@@ -510,7 +622,8 @@ void loop() {
     pet.render(
       hasTime ? &dt : nullptr,
       clockMenu.active ? &menuView : nullptr,
-      clockView.active ? &clockView : nullptr
+      clockView.active ? &clockView : nullptr,
+      statusView.active ? &statusView : nullptr
     );
   }
 
