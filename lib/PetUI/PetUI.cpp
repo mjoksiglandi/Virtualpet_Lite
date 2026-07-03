@@ -59,6 +59,10 @@ static int easeInt(int current, int target, int step) {
   return current;
 }
 
+static bool isFocusVisual(const PetState& state) {
+  return state.overlay == OverlayFx::Focus && state.mood != Mood::Angry;
+}
+
 static int shapeTopCut(Mood mood, bool leftEye, bool innerSide) {
   if (mood == Mood::Angry) {
     if (innerSide) return leftEye ? 4 : 1;
@@ -137,11 +141,15 @@ PetUI::PetUI(U8G2& d) : _d(d) {}
 
 void PetUI::tickBlink() {
   uint32_t now = millis();
+  const bool focusVisual = isFocusVisual(_s);
 
   if (!_blinking && _nextBlinkAt == 0) {
     uint32_t baseDelay = 2600;
     uint32_t jitter = 2600;
-    if (_s.mood == Mood::Sleepy) {
+    if (focusVisual) {
+      baseDelay = 4200;
+      jitter = 2800;
+    } else if (_s.mood == Mood::Sleepy) {
       baseDelay = 1400;
       jitter = 1800;
     } else if (_s.mood == Mood::Relax) {
@@ -171,7 +179,8 @@ void PetUI::tickBlink() {
 
   if (_blinking) {
     uint32_t t = now - _blinkStart;
-    if (t > 180) {
+    const uint32_t blinkDuration = focusVisual ? 150u : 180u;
+    if (t > blinkDuration) {
       _blinking = false;
       _s.blink = 0;
       _blinkLeft = 100;
@@ -181,18 +190,20 @@ void PetUI::tickBlink() {
         _nextBlinkAt = now + 90 + random(0, 80);
       }
     } else {
-      float x = t / 180.0f;
+      float x = t / (float)blinkDuration;
       float y = (x < 0.5f) ? x * 2.0f : (1.0f - x) * 2.0f;
       _s.blink = uint8_t(y * 100.0f);
       const int asym =
         (_s.mood == Mood::Glitch) ? 0 :
+        (focusVisual ? 1 :
         (_s.mood == Mood::Confused || _s.mood == Mood::Dazed) ? 10 :
-        (_s.mood == Mood::Sleepy ? 7 : 4);
+        (_s.mood == Mood::Sleepy ? 7 : 4));
       _blinkLeft = (uint8_t)constrain((int)_s.blink + asym, 0, 100);
       _blinkRight = (uint8_t)constrain((int)_s.blink - asym, 0, 100);
     }
   } else if (
     !_doubleBlinkQueued &&
+    !focusVisual &&
     (_s.mood == Mood::Sleepy || _s.mood == Mood::Relax || _s.mood == Mood::Glitch) &&
     random(0, 1000) < (_s.mood == Mood::Glitch ? 10 : 2)
   ) {
@@ -202,6 +213,7 @@ void PetUI::tickBlink() {
 
 void PetUI::tickMoodAuto() {
   uint32_t now = millis();
+  const bool focusVisual = isFocusVisual(_s);
 
   if (_s.imuActive) {
     _idleRetargetAt = now + 800;
@@ -222,7 +234,11 @@ void PetUI::tickMoodAuto() {
   int glanceRangeX = 3;
   int glanceRangeY = 2;
   int bobAmp = 1;
-  if (_s.mood == Mood::Sleepy) {
+  if (focusVisual) {
+    glanceRangeX = 1;
+    glanceRangeY = 1;
+    bobAmp = 0;
+  } else if (_s.mood == Mood::Sleepy) {
     glanceRangeX = 2;
     glanceRangeY = 1;
     bobAmp = 2;
@@ -249,11 +265,13 @@ void PetUI::tickMoodAuto() {
   }
 
   if (_idleRetargetAt == 0 || now >= _idleRetargetAt) {
-    _idleRetargetAt = now + 900 + random(0, 1800);
+    _idleRetargetAt = focusVisual ? (now + 2400 + random(0, 2600)) : (now + 900 + random(0, 1800));
     _idleTargetLookX = random(-glanceRangeX, glanceRangeX + 1);
     _idleTargetLookY = random(-glanceRangeY, glanceRangeY + 1);
 
-    if (_s.mood == Mood::Sleepy && random(0, 100) < 50) {
+    if (focusVisual && random(0, 100) < 10) {
+      _microAnimUntil = now + 120 + random(0, 100);
+    } else if (_s.mood == Mood::Sleepy && random(0, 100) < 50) {
       _microAnimUntil = now + 800 + random(0, 500);
     } else if (_s.mood == Mood::Relax && random(0, 100) < 38) {
       _microAnimUntil = now + 620 + random(0, 340);
@@ -288,7 +306,12 @@ void PetUI::tickMoodAuto() {
   if (_microAnimUntil > now) {
     const float microPhase = 1.0f - ((float)(_microAnimUntil - now) / 900.0f);
     const float pulse = sinf(microPhase * 6.2831853f);
-    if (_s.mood == Mood::Sleepy) {
+    if (focusVisual) {
+      _microSquint = (uint8_t)max(0, (int)roundf((pulse + 1.0f) * 0.5f));
+      const int dartDir = (pulse > 0.72f) ? 1 : ((pulse < -0.72f) ? -1 : 0);
+      _microBiasLX = dartDir;
+      _microBiasRX = dartDir;
+    } else if (_s.mood == Mood::Sleepy) {
       _microSquint = (uint8_t)(8 + max(0, (int)roundf((pulse + 1.0f) * 5.0f)));
       _s.lookY = min<int>(_s.lookY + 1, glanceRangeY);
       _microLeftSquint = 2;
