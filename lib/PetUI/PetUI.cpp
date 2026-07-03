@@ -56,29 +56,29 @@ static int easeInt(int current, int target, int step) {
 
 static int shapeTopCut(Mood mood, bool leftEye, bool innerSide) {
   if (mood == Mood::Angry) {
-    if (innerSide) return leftEye ? 6 : 2;
-    return leftEye ? 2 : 6;
+    if (innerSide) return leftEye ? 4 : 1;
+    return leftEye ? 1 : 4;
   }
-  if (mood == Mood::Sleepy) return innerSide ? 5 : 4;
-  if (mood == Mood::Relax) return innerSide ? 2 : 1;
+  if (mood == Mood::Sleepy) return innerSide ? 4 : 4;
+  if (mood == Mood::Relax) return innerSide ? 1 : 1;
   if (mood == Mood::Confused) {
-    if (leftEye) return innerSide ? 6 : 1;
-    return innerSide ? 1 : 6;
+    if (leftEye) return innerSide ? 4 : 1;
+    return innerSide ? 1 : 4;
   }
-  if (mood == Mood::Dazed) return innerSide ? 3 : 7;
-  if (mood == Mood::Glitch) return innerSide ? 7 : 1;
+  if (mood == Mood::Dazed) return innerSide ? 2 : 3;
+  if (mood == Mood::Glitch) return innerSide ? 2 : 2;
   return 0;
 }
 
 static int shapeBottomCut(Mood mood, bool leftEye, bool innerSide) {
-  if (mood == Mood::Sleepy) return innerSide ? 1 : 2;
+  if (mood == Mood::Sleepy) return innerSide ? 1 : 1;
   if (mood == Mood::Relax) return 0;
   if (mood == Mood::Confused) {
-    if (leftEye) return innerSide ? 0 : 3;
-    return innerSide ? 3 : 0;
+    if (leftEye) return innerSide ? 0 : 2;
+    return innerSide ? 2 : 0;
   }
-  if (mood == Mood::Dazed) return innerSide ? 3 : 2;
-  if (mood == Mood::Glitch) return innerSide ? 3 : 1;
+  if (mood == Mood::Dazed) return innerSide ? 2 : 1;
+  if (mood == Mood::Glitch) return innerSide ? 1 : 1;
   return 0;
 }
 
@@ -455,47 +455,7 @@ void PetUI::drawGlitchOverlay(int w, int h) {
 }
 
 void PetUI::drawAccentOverlay(int w, int) {
-  const int strength = constrain((int)_s.overlayStrength, 0, 100);
-  if (_s.overlay == OverlayFx::None || strength == 0) return;
-
-  const int cx = w / 2;
-  const int topY = 16 + _s.eyeShiftY + _s.idleBobY;
-  const int leftEyeX = cx - 22 + _s.eyeShiftX + _s.bodyLeanX;
-  const int rightEyeX = cx + 22 + _s.eyeShiftX + _s.bodyLeanX;
-
-  _d.setDrawColor(1);
-  if (_s.overlay == OverlayFx::Calm) {
-    if (strength > 35) {
-      _d.drawLine(leftEyeX - 8, topY + 2, leftEyeX - 2, topY - 1);
-      _d.drawLine(rightEyeX + 2, topY - 1, rightEyeX + 8, topY + 2);
-    }
-  } else if (_s.overlay == OverlayFx::Doze) {
-    if (strength > 60) {
-      _d.setFont(u8g2_font_4x6_tf);
-      _d.drawStr(cx + 26, 13, "z");
-      if (strength > 80) _d.drawStr(cx + 32, 9, "z");
-    }
-  } else if (_s.overlay == OverlayFx::Focus) {
-    if (strength > 45) {
-      _d.drawLine(leftEyeX - 9, topY + 7, leftEyeX - 3, topY + 5);
-      _d.drawLine(rightEyeX + 3, topY + 5, rightEyeX + 9, topY + 7);
-      _d.drawHLine(cx - 4, topY - 3, 8);
-    }
-  } else if (_s.overlay == OverlayFx::Dizzy) {
-    if (strength > 55) {
-      _d.setFont(u8g2_font_4x6_tf);
-      _d.drawStr(cx + 26, 11, "*");
-      _d.drawStr(cx + 31, 16, "*");
-    }
-  } else if (_s.overlay == OverlayFx::Confused) {
-    if (strength > 55) {
-      _d.setFont(u8g2_font_4x6_tf);
-      _d.drawStr(cx + 27, 12, "?");
-    }
-  } else if (_s.overlay == OverlayFx::Startle) {
-    _d.drawFrame(4, 4, 5, 5);
-    _d.drawFrame(w - 9, 4, 5, 5);
-  }
+  (void)w;
 }
 
 void PetUI::drawClockMenu(int w, int h, const ClockMenuView& menu) {
